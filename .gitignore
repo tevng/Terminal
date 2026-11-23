@@ -1,0 +1,20 @@
+node_modules/
+dist/
+release/
+.npm-cache/
+test-results/
+.runtime-cache/
+
+# Local credentials and user state
+.env
+.env.*
+!.env.example
+.ssh/
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+*.log
+known-hosts.json
+settings.json

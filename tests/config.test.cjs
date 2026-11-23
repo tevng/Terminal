@@ -1,0 +1,33 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs/promises');
+const path=require('node:path');
+const os=require('node:os');
+const {ConfigStore,matches}=require('../electron/config.cjs');
+test('SSH config: includes, aliases, wildcards, first value, quoted identity and tokens',async t=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'silk-config-'));t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  await fs.mkdir(path.join(home,'.ssh','conf.d'),{recursive:true});
+  await fs.writeFile(path.join(home,'.ssh','config'),'Include conf.d/*.conf\nHost prod-* !prod-old\n User deploy\nHost *\n Port 2222\n User fallback\n IdentityFile "~/.ssh/fallback key"\n');
+  await fs.writeFile(path.join(home,'.ssh','conf.d','a.conf'),'Host prod-one prod-two\n hOsTnAmE server.example\n IdentityFile "~/.ssh/%n key"\nHost gateway\n HostName jump.example\n User jumpuser\nHost target\n HostName target.example\n ProxyJump gateway\n');
+  const store=new ConfigStore({home});const list=await store.list();
+  assert.deepEqual(list.hosts.map(x=>x.alias),['prod-one','prod-two','gateway','target']);
+  const p=store.compute('prod-one');assert.equal(p.host,'server.example');assert.equal(p.username,'deploy');assert.equal(p.port,2222);
+  assert.deepEqual(p.keyPaths,[path.join(home,'.ssh','prod-one key'),path.join(home,'.ssh','fallback key')]);
+  assert.equal(store.compute('prod-old').username,'fallback');
+  assert.deepEqual(store.plan('target').map(x=>x.host),['jump.example','target.example']);
+  assert.equal(matches(['prod-*','!prod-old'],'prod-old'),false);
+});
+test('SSH config: conditional Include, cycles and no command execution',async t=>{
+  const home=await fs.mkdtemp(path.join(os.tmpdir(),'silk-config-'));t.after(()=>fs.rm(home,{recursive:true,force:true}));
+  await fs.mkdir(path.join(home,'.ssh'));
+  const file=path.join(home,'.ssh','config');
+  await fs.writeFile(file,'Host target\n Include target.conf\nHost other\n User other\n');
+  await fs.writeFile(path.join(home,'.ssh','target.conf'),'User included\nHost child\n User childuser\n');
+  const store=new ConfigStore({home});await store.load();
+  assert.equal(store.compute('target').username,'included');assert.equal(store.compute('other').username,'other');
+  await fs.writeFile(file,'Include config\n');await assert.rejects(()=>store.load(),/循环/);
+  await fs.writeFile(file,'Host a\n ProxyJump b\nHost b\n ProxyJump a\n');await store.load();assert.throws(()=>store.plan('a'),/循环/);
+  await fs.writeFile(file,'Host a\n ProxyCommand touch NEVER_RUN\n');await store.load();assert.throws(()=>store.plan('a'),/ProxyCommand/);
+  await fs.writeFile(file,'Host a\n User test\nMatch exec "touch NEVER_RUN"\n User attacker\n');await store.load();assert.equal(store.compute('a').username,'test');assert.throws(()=>store.plan('a'),/Match/);
+  await assert.rejects(()=>fs.stat(path.join(home,'NEVER_RUN')),e=>e.code==='ENOENT');
+});

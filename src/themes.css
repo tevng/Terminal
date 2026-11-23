@@ -1,0 +1,40 @@
+/* UI tokens apply independently from the terminal's ANSI palette. */
+html,body{background:var(--bg,#101318);color:var(--text,#d4dce6)}
+:root{--panel:#151a21;--raised:#1c232d;--input:#11161d;--text:#d4dce6;--border:#34404f;--on-accent:#11271e;--link:#8cbced;--error:#ffa0aa}
+header,#tabs,footer{background:var(--panel);border-color:var(--border)}
+.brand-sub,.shortcut-hint,.muted,#find-result,footer,.tab-close{color:var(--muted)}
+button{background:var(--raised);border-color:var(--border);color:var(--text)}
+button:hover{background:color-mix(in srgb,var(--raised) 85%,var(--text));border-color:var(--muted)}
+button:focus-visible,input:focus,select:focus,textarea:focus{outline-color:var(--accent)}
+.primary,.primary:hover{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.tab{background:var(--raised)}.tab.active{background:var(--bg);border-color:var(--border)}
+.tab button,.header-actions button,.dialog-heading button,.toolbar button{background:transparent;color:var(--text)}
+.toolbar{color:var(--muted);border-color:var(--border)}
+#workspace{background:var(--bg)}.terminal-host{background:var(--terminal-bg,#101318)}
+#workspace .xterm-viewport::-webkit-scrollbar-track{background:var(--terminal-bg,#101318)}
+::-webkit-scrollbar-thumb,.xterm-viewport::-webkit-scrollbar-thumb{background:var(--border)}
+#welcome{background:radial-gradient(ellipse at 80% 20%,color-mix(in srgb,var(--accent) 8%,transparent),transparent 60%)}
+#welcome p,.welcome-features{color:var(--muted)}
+dialog,#markdown-panel{background:var(--panel);border-color:var(--border);color:var(--text)}
+.dialog-heading button,label{color:var(--text)}
+input,select,textarea{background:var(--input);color:var(--text);border-color:var(--border)}
+input::placeholder,input[readonly]{color:var(--muted)}
+.error{color:var(--error)}
+#find-bar{background:var(--raised)}
+#font-preview{color:var(--accent);border-color:var(--border)}
+#markdown-content{color:var(--text)}
+#markdown-content pre,#markdown-content code{background:var(--input);border-color:var(--border)}
+#markdown-content code{color:var(--accent)}
+#markdown-content blockquote{color:var(--muted);border-color:var(--accent)}
+#markdown-content td,#markdown-content th,#markdown-content hr{border-color:var(--border)}
+#markdown-content a{color:var(--link)}
+#markdown-content .katex-error{color:var(--error)!important}
+#toast{background:var(--raised);color:var(--text);border-color:var(--accent)}
+#appearance-dialog{width:620px}.theme-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 20px}
+.theme-card,.theme-card:hover{background:var(--card-bg);color:var(--card-fg);border:1px solid var(--border);text-align:left;padding:12px 10px;border-radius:7px}
+.theme-card:before{content:'';display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--card-accent);margin-right:8px}
+.theme-card[aria-pressed=true]{outline:2px solid var(--accent);outline-offset:1px}
+#scheme-preview{padding:18px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+#scheme-preview-heading{font-family:'Segoe UI','Microsoft YaHei',sans-serif;font-size:11px;opacity:.85;margin-bottom:12px}
+#scheme-preview-text{font-family:inherit;line-height:1.8;font-size:14px;margin:0;overflow-x:auto}
+#scheme-swatches{display:grid;grid-template-columns:repeat(8,1fr);gap:4px;margin-top:15px}#scheme-swatches span{height:14px;border-radius:2px}
