@@ -1,30 +1,35 @@
 const { Client, utils } = require('ssh2');
 const { randomUUID } = require('node:crypto');
+const { english } = require('../i18n/index.cjs');
 
-function validateProfile(p) {
-  if (!p || typeof p.host !== 'string' || !p.host.trim() || p.host.length > 253 || /[\s\x00-\x1f]/.test(p.host)) throw Error('请输入有效主机名');
-  if (typeof p.username !== 'string' || !p.username.trim() || p.username.length > 128 || /[\x00-\x1f]/.test(p.username)) throw Error('请输入用户名');
-  if (!Number.isInteger(p.port) || p.port < 1 || p.port > 65535) throw Error('端口必须为 1–65535');
+function validateProfile(p, t = english) {
+  if (!p || typeof p.host !== 'string' || !p.host.trim() || p.host.length > 253 || /[\s\x00-\x1f]/.test(p.host)) throw Error(t('ssh.invalidHost'));
+  if (typeof p.username !== 'string' || !p.username.trim() || p.username.length > 128 || /[\x00-\x1f]/.test(p.username)) throw Error(t('ssh.invalidUsername'));
+  if (!Number.isInteger(p.port) || p.port < 1 || p.port > 65535) throw Error(t('ssh.invalidPort'));
   return { host: p.host.trim(), port: p.port, username: p.username.trim() };
 }
-function dimensions(cols, rows) {
-  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || cols > 1000 || rows < 1 || rows > 1000) throw Error('无效终端尺寸');
+function dimensions(cols, rows, t = english) {
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 2 || cols > 1000 || rows < 1 || rows > 1000) throw Error(t('terminal.invalidDimensions'));
   return { cols, rows };
 }
 
 class Sessions {
-  constructor({ send, verify, readKey, agent, requestAuth }) {
+  constructor({ send, verify, readKey, agent, requestAuth, t = english }) {
     this.items = new Map(); this.send = send; this.verify = verify; this.readKey = readKey; this.agent = agent;this.requestAuth=requestAuth;
+    this.t = t;
   }
   async connect(p, size) {
-    const profile = validateProfile(p); dimensions(size.cols, size.rows);
-    if (this.items.size >= 24) throw Error('最多同时打开 24 个会话');
+    const t = this.t;
+    const profile = validateProfile(p, t); dimensions(size.cols, size.rows, t);
+    if (this.items.size >= 24) throw Error(t('terminal.sessionLimit'));
     const id = randomUUID(), client = new Client();
     const s = { id, client, clients:[client], channel: null, pending: 0, bytes: 0, closed: false, seq: 0 };
     this.items.set(id, s);
     const emit = (type, extra = {}) => this.send({ id, type, ...extra });
-    const failure=e=>e.level==='client-authentication' ? `SSH 认证失败：${s.authHost||profile.username+'@'+profile.host}。${s.authHint||'密钥或密码未被服务器接受。'}` : e.message;
-    client.on('error', e => { if(e.level==='agent' && s.authFallback){s.authHint='SSH Agent 不可用，已继续尝试其他认证方式。';return;}emit('error', { message: failure(e) }); this.close(id); });
+    const failure = e => e.level === 'client-authentication' ? t('auth.failed', {
+      host: s.authHost || `${profile.username}@${profile.host}`, hint: s.authHint || t('auth.rejected')
+    }) : e.message;
+    client.on('error', e => { if(e.level==='agent' && s.authFallback){s.authHint=t('auth.agentFallback');return;}emit('error', { message: failure(e) }); this.close(id); });
     client.on('close', () => this.close(id));
     client.on('ready', () => {
       client.shell({ term: 'xterm-256color', cols: size.cols, rows: size.rows, modes: { IUTF8: 1 } }, { env: { COLORTERM: 'truecolor', TERM_PROGRAM: 'SilkTerminal' } }, (err, channel) => {
@@ -47,8 +52,8 @@ class Sessions {
     setImmediate(async () => { try {
       const plan=p.plan || [p]; let socket;
       for(let i=0;i<plan.length;i++) {
-        const hop=plan[i], hopProfile=validateProfile(hop), final=i===plan.length-1;
-        const connection=final?client:new Client();if(!final){s.clients.push(connection);connection.on('error',e=>{if(e.level==='agent' && hop.auth==='config')return;emit('error',{message:`跳板 SSH: ${failure(e)}`});this.close(id);});}
+        const hop=plan[i], hopProfile=validateProfile(hop,t), final=i===plan.length-1;
+        const connection=final?client:new Client();if(!final){s.clients.push(connection);connection.on('error',e=>{if(e.level==='agent' && hop.auth==='config')return;emit('error',{message:t('ssh.jumpError',{reason:failure(e)})});this.close(id);});}
         s.authHost=`${hop.username}@${hop.alias||hop.host}`;
         s.authFallback=hop.auth==='config';
         const auth=await this.authOptions(hop,s);
@@ -62,9 +67,9 @@ class Sessions {
         else {
           await new Promise((resolve,reject)=>{
             connection.on('error',e=>{if(e.level!=='agent'||hop.auth!=='config')reject(e);});connection.once('ready',resolve);
-            connection.once('close',()=>{reject(Error('跳板连接已关闭'));this.close(id);});connection.connect(config);
+            connection.once('close',()=>{reject(Error(t('ssh.jumpClosed')));this.close(id);});connection.connect(config);
           });
-          const next=validateProfile(plan[i+1]);
+          const next=validateProfile(plan[i+1],t);
           socket=await new Promise((resolve,reject)=>connection.forwardOut('127.0.0.1',0,next.host,next.port,(err,stream)=>err?reject(err):resolve(stream)));
         }
       }
@@ -72,23 +77,29 @@ class Sessions {
     return id;
   }
   async authOptions(p, session) {
+      const t = this.t;
       const auth = {};
       if(p.auth==='config') {
         const methods=[], keyErrors=[];
         for(const file of p.keyPaths) {
+          let data;
           try {
-            const data=await this.readKey(file,true), key=utils.parseKey(data,p.passphrase||undefined);
-            if(key instanceof Error) {
-              if(this.requestAuth && session && /encrypted|passphrase/i.test(key.message)) {
-                const answer=await this.requestAuth({id:session.id,kind:'passphrase',host:p.host,alias:p.alias,username:p.username,instructions:`解锁私钥：${file}`,prompts:[{prompt:'私钥口令',echo:false}]});
-                if(session.closed)throw Error('会话已关闭');
-                const unlocked=utils.parseKey(data,answer[0]);if(unlocked instanceof Error){keyErrors.push(unlocked.message);continue;}
-                methods.push({type:'publickey',username:p.username,key:Array.isArray(unlocked)?unlocked[0]:unlocked});continue;
-              }
-              keyErrors.push(key.message);continue;
-            }
-            methods.push({type:'publickey',username:p.username,key:Array.isArray(key)?key[0]:key});
-          } catch(e) {if(/用户取消|会话已关闭/.test(e.message))throw e;if(e.code!=='ENOENT')keyErrors.push(e.message);}
+            data = await this.readKey(file, true);
+          } catch (e) {
+            if (e.code !== 'ENOENT') keyErrors.push(e.message);
+            continue;
+          }
+          let key = utils.parseKey(data, p.passphrase || undefined);
+          if (key instanceof Error && this.requestAuth && session && /encrypted|passphrase/i.test(key.message)) {
+            const [passphrase] = await this.requestAuth({
+              id: session.id, kind: 'passphrase', host: p.host, alias: p.alias, username: p.username,
+              instructions: t('auth.unlockKey', { file }), prompts: [{ prompt: t('auth.passphrase'), echo: false }]
+            });
+            if (session.closed) throw Error(t('auth.sessionClosed'));
+            key = utils.parseKey(data, passphrase);
+          }
+          if (key instanceof Error) { keyErrors.push(key.message); continue; }
+          methods.push({type:'publickey',username:p.username,key:Array.isArray(key)?key[0]:key});
         }
         const agent=p.agent===null?null:p.agent||this.agent;
         if(agent && !p.identitiesOnly)methods.push({type:'agent',username:p.username,agent});
@@ -99,9 +110,9 @@ class Sessions {
           methods.sort((a,b)=>order.indexOf(method(a))-order.indexOf(method(b)));
           for(let i=methods.length-1;i>=0;i--)if(!order.includes(method(methods[i])))methods.splice(i,1);
         }
-        if(session)session.authHint=keyErrors.length?`部分私钥无法加载：${keyErrors.join('；')}`:'服务器未接受已尝试的密钥或密码。';
+        if (session) session.authHint = keyErrors.length ? t('auth.keyErrors', { errors: keyErrors.join(', ') }) : t('auth.rejected');
         if(!this.requestAuth || !session) {
-          if(!methods.length)throw Error(`SSH config 未提供可用认证。${keyErrors[0]||'请配置 IdentityFile/Agent 或输入密码。'}`);
+          if (!methods.length) throw Error(t('auth.configUnavailable', { hint: keyErrors[0] || t('auth.configureCredentials') }));
           return {authHandler:['none',...methods]};
         }
         const queue=['none',...methods];let passwordPrompts=0,interactiveTried=false;
@@ -116,7 +127,7 @@ class Sessions {
           if(offered?.includes('password') && allowed('password') && passwordPrompts<3) {
             passwordPrompts++;
             this.requestAuth({id:session.id,kind:'password',host:p.host,alias:p.alias,username:p.username,
-              instructions:passwordPrompts===1?'密钥未完成认证，请输入此主机的登录密码。':'上一次密码未通过，请重试。',prompts:[{prompt:'登录密码',echo:false}]}).then(answers=>{
+              instructions:t(passwordPrompts===1?'auth.enterPassword':'auth.retryPassword'),prompts:[{prompt:t('ssh.password'),echo:false}]}).then(answers=>{
               callback(session.closed?false:{type:'password',username:p.username,password:answers[0]});
             },e=>{session.authHint=e.message;callback(false);});return;
           }
@@ -133,10 +144,10 @@ class Sessions {
         auth.privateKey = await this.readKey(p.keyPath);
         if (p.passphrase) auth.passphrase = p.passphrase;
       } else if (p.auth === 'agent') {
-        if (!this.agent) throw Error('未检测到 SSH agent；请选择私钥或密码');
+        if (!this.agent) throw Error(t('auth.agentUnavailable'));
         auth.agent = this.agent;
       } else if (p.auth === 'password') auth.password = String(p.password || '');
-      else throw Error('未知认证方式');
+      else throw Error(t('auth.unknownMethod'));
       return auth;
   }
   ack(id, seq) {
@@ -146,14 +157,14 @@ class Sessions {
   }
   input(id, data, binary = false) {
     const s = this.items.get(id);
-    if (typeof data !== 'string' || Buffer.byteLength(data) > 1024 * 1024) throw Error('输入超过 1 MiB 限制');
+    if (typeof data !== 'string' || Buffer.byteLength(data) > 1024 * 1024) throw Error(this.t('terminal.inputLimit'));
     if (!s?.channel || s.closed) return;
     if (s.channel.writableLength > 2 * 1024 * 1024) {
-      this.send({ id, type: 'notice', message: '远端输入阻塞，本次输入未发送，请等待后重试。' }); return;
+      this.send({ id, type: 'notice', message: this.t('ssh.inputBlocked') }); return;
     }
     s.channel.write(binary === true ? Buffer.from(data, 'latin1') : data);
   }
-  resize(id, cols, rows) { dimensions(cols, rows); this.items.get(id)?.channel?.setWindow(rows, cols, 0, 0); }
+  resize(id, cols, rows) { dimensions(cols, rows, this.t); this.items.get(id)?.channel?.setWindow(rows, cols, 0, 0); }
   close(id) {
     const s = this.items.get(id); if (!s || s.closed) return;
     s.closed = true; s.channel?.destroy(); s.clients.forEach(c=>c.end());

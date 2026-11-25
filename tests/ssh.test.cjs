@@ -4,6 +4,7 @@ const { generateKeyPairSync } = require('node:crypto');
 const { once } = require('node:events');
 const { Server } = require('ssh2');
 const { Sessions, validateProfile, dimensions } = require('../electron/ssh.cjs');
+const { cjkSample, hello, testWord } = require('../i18n/samples.json');
 const {ConfigStore}=require('../electron/config.cjs');
 const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),net=require('node:net');
 const key = generateKeyPairSync('rsa', { modulusLength:2048 }).privateKey.export({type:'pkcs1',format:'pem'});
@@ -25,7 +26,7 @@ test('real SSH: UTF-8, truecolor, PTY resize, input, output backpressure, cleanu
       session.on('pty',(accept,_reject,info)=>{pty=info;accept();});
       session.on('env',accept=>accept?.());
       session.on('window-change',(accept,_reject,info)=>{resize=info;accept?.();});
-      session.on('shell',accept=>{serverChannel=accept();serverChannel.on('data',d=>{received+=d.toString();});serverChannel.write('你好 🥳\r\n\x1b[38;2;120;220;180mtruecolor\x1b[0m\r\n');});
+      session.on('shell',accept=>{serverChannel=accept();serverChannel.on('data',d=>{received+=d.toString();});serverChannel.write(`${hello} 🥳\r\n\x1b[38;2;120;220;180mtruecolor\x1b[0m\r\n`);});
     }));
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -35,20 +36,20 @@ test('real SSH: UTF-8, truecolor, PTY resize, input, output backpressure, cleanu
   id=await manager.connect({host:'127.0.0.1',port:server.address().port,username:'test',auth:'password',password:'secret'},{cols:96,rows:30});
   await waitUntil(()=>events.some(e=>e.type==='data'));
   assert.equal(trusted,true); assert.equal(pty.term,'xterm-256color');assert.equal(pty.cols,96);
-  const first=events.find(e=>e.type==='data'); assert.match(Buffer.from(first.data).toString(),/你好 🥳/);
+  const first=events.find(e=>e.type==='data'); assert.ok(Buffer.from(first.data).toString().includes(hello + ' 🥳'));
   serverChannel.write('SECOND'); await new Promise(r=>setTimeout(r,120));
   assert.equal(events.filter(e=>e.type==='data').length,1,'output stops until renderer ack');
   manager.ack(id,first.seq+1);await new Promise(r=>setTimeout(r,40));assert.equal(events.filter(e=>e.type==='data').length,1,'wrong ack cannot resume');
   autoAck=true;manager.ack(id,first.seq);
   await waitUntil(()=>events.filter(e=>e.type==='data').length===2);
   manager.resize(id,120,44);await waitUntil(()=>resize);assert.equal(resize.rows,44);assert.equal(resize.cols,120);
-  manager.input(id,'echo 测试\r');await waitUntil(()=>received.includes('测试'));
-  const flood=Buffer.from(('context 中文 🚀 '+'.'.repeat(80)+'\r\n').repeat(30000));
+  manager.input(id,`echo ${testWord}\r`);await waitUntil(()=>received.includes(testWord));
+  const flood=Buffer.from((`context ${cjkSample} 🚀 `+'.'.repeat(80)+'\r\n').repeat(30000));
   const before=events.filter(e=>e.type==='data').reduce((n,e)=>n+e.data.length,0);
   serverChannel.write(flood);
   await waitUntil(()=>events.filter(e=>e.type==='data').reduce((n,e)=>n+e.data.length,0)>=before+flood.length,10000);
   const output=Buffer.concat(events.filter(e=>e.type==='data').map(e=>Buffer.from(e.data))).toString();
-  assert.equal(output.split('context 中文 🚀').length-1,30000);
+  assert.equal(output.split(`context ${cjkSample} 🚀`).length-1,30000);
   manager.close(id);assert.equal(manager.items.size,0);
 });
 test('untrusted host is refused before authentication', {timeout:10000},async t=>{
@@ -80,7 +81,7 @@ test('SSH config connects with encrypted IdentityFile through verified ProxyJump
         });
         else c.on('session',accept=>{
           const session=accept();session.on('pty',accept=>accept());session.on('env',accept=>accept?.());
-          session.on('shell',accept=>{const ch=accept();ch.on('data',d=>{targetInput+=d.toString();});ch.write('JUMP_OK 中文 🥳\r\n');});
+          session.on('shell',accept=>{const ch=accept();ch.on('data',d=>{targetInput+=d.toString();});ch.write(`JUMP_OK ${cjkSample} 🥳\r\n`);});
         });
       });
     });servers.push(server);return server;
@@ -94,7 +95,7 @@ test('SSH config connects with encrypted IdentityFile through verified ProxyJump
   const id=await manager.connect({...plan.at(-1),plan},{cols:80,rows:24});
   await waitUntil(()=>events.some(e=>e.type==='data'));
   assert.equal(forwarded,true);assert.deepEqual(verified,[jump.address().port,target.address().port]);
-  assert.match(Buffer.concat(events.filter(e=>e.type==='data').map(e=>Buffer.from(e.data))).toString(),/JUMP_OK 中文 🥳/);
+  assert.ok(Buffer.concat(events.filter(e=>e.type==='data').map(e=>Buffer.from(e.data))).toString().includes(`JUMP_OK ${cjkSample} 🥳`));
   manager.input(id,'through jump\r');await waitUntil(()=>targetInput.includes('through jump'));manager.close(id);assert.equal(manager.items.size,0);
 });
 for(const mode of ['password','keyboard-interactive','cancel'])test(`SSH config interactive fallback: ${mode}`,{timeout:10000},async t=>{
@@ -109,12 +110,12 @@ for(const mode of ['password','keyboard-interactive','cancel'])test(`SSH config 
     c.on('ready',()=>c.on('session',accept=>{const session=accept();session.on('pty',accept=>accept());session.on('env',accept=>accept?.());session.on('shell',accept=>{accept().write('AUTH_OK\r\n');});}));
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
-  const manager=new Sessions({send:e=>events.push(e),verify:async()=>true,readKey:async()=>{const e=Error('missing');e.code='ENOENT';throw e;},requestAuth:async request=>{requests.push(request);if(mode==='cancel')throw Error('用户取消认证');return [mode==='password'?'session-secret':'123456'];}});
+  const manager=new Sessions({send:e=>events.push(e),verify:async()=>true,readKey:async()=>{const e=Error('missing');e.code='ENOENT';throw e;},requestAuth:async request=>{requests.push(request);if(mode==='cancel')throw Error('Authentication cancelled.');return [mode==='password'?'session-secret':'123456'];}});
   t.after(()=>{manager.closeAll();clients.forEach(c=>c.end());server.close();});
   const id=await manager.connect({host:'127.0.0.1',port:server.address().port,username:'test',alias:'desktop',auth:'config',keyPaths:['missing'],agent:mode==='password'?path.join(os.tmpdir(),'silk-agent-not-running'):null},{cols:80,rows:24});
   await waitUntil(()=>events.some(e=>e.type===(mode==='cancel'?'error':'data')));
   assert.equal(requests.length,1);assert.equal(requests[0].alias,'desktop');assert.equal(requests[0].id,id);assert.equal(requests[0].prompts[0].echo,false);
-  if(mode==='cancel'){assert.equal(authCount,0);assert.match(events.find(e=>e.type==='error').message,/用户取消/);assert.equal(manager.items.size,0);}
+  if(mode==='cancel'){assert.equal(authCount,0);assert.match(events.find(e=>e.type==='error').message,/Authentication cancelled/);assert.equal(manager.items.size,0);}
   else{assert.equal(authCount,1);assert.equal(requests[0].kind,mode);assert.match(Buffer.from(events.find(e=>e.type==='data').data).toString(),/AUTH_OK/);}
 });
 test('remote shell EOF closes the SSH session once without waiting for transport close',{timeout:10000},async t=>{

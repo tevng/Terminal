@@ -1,0 +1,13 @@
+{
+  "cjkSample": "中文",
+  "hello": "你好",
+  "testWord": "测试",
+  "imeCommit": "你好，中文输入",
+  "imeWholeValue": "你是",
+  "imeRepeated": "连续输入，🚀",
+  "imeAfterPassword": "登录后中文输入",
+  "fullWidthComma": "，",
+  "fullWidthPeriod": "。",
+  "fullWidthRollover": "，，。。！！",
+  "fullWidthPunctuation": "，。！？：；（）“”《》、"
+}

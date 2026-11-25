@@ -1,74 +1,74 @@
-# 验证记录
+# Validation history
 
-## 0.3.1 SSH 结束自动关标签
+## 0.3.1 Automatic tab closure when SSH ends
 
-监听远程通道 EOF 和关闭事件，清理 SSH 会话并通知前端移除标签；关闭操作幂等，重复事件不重复清理。远端主动结束无需手动确认，错误原因保留为提示消息。
+Terminal listens for remote channel EOF and close events, cleans up the SSH session, and tells the renderer to remove the tab. Cleanup is idempotent. A remote exit closes the tab automatically, and connection errors appear in a notification.
 
-协议测试新增远程 Shell 只发送 EOF、不等待完整传输关闭的场景，确认会话清理且 closed 事件只发送一次。Electron 界面测试覆盖后台 Shell 正常退出不抢焦点、当前标签正常退出切换相邻标签、异常通道关闭、全部退出返回首页及随后新建连接。保留原有主题、IME、密码输入和剪贴板回归。
+The protocol test sends EOF from a remote shell without waiting for the transport to close. It checks that the session is removed and the renderer receives exactly one close event. The Electron test covers background exits preserving focus, active exits selecting a neighbor, unexpected channel closure, return to the home screen after all tabs close, and creation of a new connection afterward. Existing theme, IME, password, and clipboard tests still run.
 
-## 0.3.0 主题与配色
+## 0.3.0 Themes and color schemes
 
-新增 8 种界面主题、12 套终端配色、系统深浅色跟随、独立搭配和保存前预览。新增界面测试逐一检查 12 套预览及其 16 色色板，验证取消不改变已有终端、浅色方案更新 5 个已有标签的实际 DOM 文字颜色、系统主题响应、界面与终端独立选择、保存外观不重连 SSH，以及保存字体/性能设置后仍保留配色。
+This release adds eight UI themes, twelve terminal color schemes, system light and dark mode, independent scheme selection, and a preview before saving. The UI suite checks all twelve previews and their 16 ANSI swatches. It verifies that cancel preserves the current scheme, that a light scheme updates the rendered text color in five existing tabs, that the UI follows system mode, that the UI and terminal colors can be chosen independently, that applying a theme keeps SSH connected, and that saving font or performance settings preserves the color choices.
 
-人工查看浅色阅读面板、深色选择器截图；截图包含中文、Comic Mono、Emoji、LaTeX、ANSI 多色输出。原有认证、IME 标点、复制粘贴与大输出测试继续运行。外观选择保存在原有用户设置，更新不修改已有字体配置。
+Light-reader and dark-picker screenshots were reviewed manually. They contained Chinese text, Comic Mono, emoji, LaTeX, and ANSI colors. Authentication, IME punctuation, clipboard, and large-output tests still run. Appearance uses the existing settings file and preserves existing font configuration.
 
-## 0.2.4 全角标点重复修复
+## 0.2.4 Duplicate full-width punctuation
 
-通过真实 Electron → SSH 路径复现：IME 229 keydown/keyup 后的全角逗号 input 事件与 CompositionHelper 的延迟 textarea 差分各发送一次，服务器收到“，，”；修复后为单个“，”。
+An Electron-to-SSH test reproduced a full-width comma being sent twice. The native input event and the delayed textarea diff in xterm's CompositionHelper each emitted one comma after an IME keydown and keyup with key code 229. The fixed path sends one comma.
 
-为输入事务增加序号，已由原生 input/组合事件负责的提交会使旧差分任务失效；input 路径根据实际组合状态处理文本，组合提交等待期间不再被 input/keypress 重发。不使用按字符内容或时间窗口去重，因此用户有意连续输入“，，”“。。”“！！”仍按原样保留。
+An input generation counter invalidates stale diff work after a native input or composition event handles the insertion. The input handler checks the actual composition state. Pending composition commits are protected from duplicate input and keypress handling. Consecutive intentional presses of the same punctuation remain intact.
 
-增加全角逗号、句号、问叹号、冒号、分号、括号、引号、书名号、顿号测试；覆盖 keydown/input/keyup、keyup 提前、input 提前、快速按键重叠、compositionend 与 input 并发、keypress 与 input 并发六种事件顺序，并继续验证密码后的中文/英文输入和复制粘贴。
+Tests cover full-width commas, periods, question marks, exclamation marks, colons, semicolons, parentheses, quotation marks, book-title marks, and enumeration commas. They exercise input between keydown and keyup, early keyup, early input, rapidly overlapping keys, compositionend and input together, and keypress and input together. The suite still covers Chinese and English input after password entry and copy and paste.
 
-## 0.2.3 密码框后的输入焦点恢复
+## 0.2.3 Input focus after password entry
 
-针对用户补充的“提示输入密码后不能切换输入法，英文正常”路径，补上从密码控件到终端的原生输入焦点交接：先让仍附着在文档中的密码框失焦，清空密码并关闭，再在渲染帧中重新聚焦 xterm 普通文本输入框，使用 BrowserWindow.blurWebView/focusOnWebView 重新关联 Windows 输入客户端。应用不在前台时跳过原生重聚焦，待返回窗口时再恢复，不强制切换用户的输入法。
+This change addresses the reported case where English input worked after a password prompt but switching input methods did not. Terminal blurs the password control while it is still attached, clears and closes the dialog, focuses xterm's plain-text field, and reattaches the Windows text input client using `BrowserWindow.blurWebView` and `focusOnWebView`. It waits until the window is in the foreground before restoring native focus and leaves the user's input method selected.
 
-新增自动化从密码框直接按 Enter 登录，验证密码控件失焦、原生 WebView 焦点重建调用、登录后同一 SSH 会话立即输入中文及英文。原测试仅断言 DOM activeElement，无法证明 Windows 的原生输入法状态恢复；本次补上原生焦点调用与认证后的组合输入测试，但仍不等于对用户实际微软拼音切换的手工验证。
+The automated test submits the password with Enter, verifies that the field blurred while attached and that the WebView focus callback ran, then sends Chinese and English to the same SSH session. This adds native focus and composition coverage beyond the earlier DOM `activeElement` check. Manual verification of the user's specific Microsoft Pinyin configuration remains separate.
 
-## 0.2.2 微软拼音兼容修复
+## 0.2.2 Microsoft Pinyin compatibility
 
-复现 Windows TSF 的事件形状：隐藏输入框已有三个空格，组合期间整个值被替换为拼音，再确认“你是”。0.2.1 的真实 Electron + SSH 测试收到空字符串；修复后收到完整“你是”，且仅一次。为避免按压缩变量名修改依赖，构建从固定的 6.0.0 上游源码应用局部补丁；若源码或版本变化导致补丁不匹配则构建失败。
+The test reproduces a Windows TSF event sequence that replaces the value of a hidden textarea containing three spaces, then commits a two-character Chinese phrase. Under 0.2.1, Electron sent an empty string over SSH. With the patch, the remote side receives the full committed phrase once. The build patches pinned xterm.js 6.0.0 sources and fails if the expected version or source text changes.
 
-测试覆盖 Chromium 原生 IME 组合与提交、确认前不发送拼音、取消组合、微软拼音全值替换、不同长度的残留文本、连续中文、中文与 Emoji 混输、英文候选提交、确认后的 Enter 和英文输入。现有密码回退、剪贴板、三万行输出、多字体宽度与标签切换测试继续运行。这是针对实际 TSF 事件顺序的自动化回归，不宣称已对用户机器上的每一版微软拼音做手工验证。
+Tests cover Chromium's native IME composition and commit, pending Pinyin staying local, cancelled compositions, Microsoft Pinyin's full-value replacement, different lengths of stale text, consecutive Chinese commits, Chinese with emoji, English candidate commits, and Enter or English input after composition. Password fallback, clipboard, 30,000-line output, font widths, and tab switching still run. These tests reproduce TSF event ordering. They leave Microsoft Pinyin versions on individual Windows machines for manual validation.
 
-## 0.2.1 认证与剪贴板修复
+## 0.2.1 Authentication and clipboard fixes
 
-复现实际 desktop 链路：跳板密钥认证成功；目标主机拒绝默认密钥，但广告的认证方法包含 password。修复 config 认证在密钥失败后缺少交互式密码回退的问题，加入逐主机密码框、keyboard-interactive 提示及加密私钥口令输入。没有请求或保存用户密码，没有在实际主机执行命令。
+An Electron integration test reproduced a jump host accepting a key while the destination rejected the default key and advertised password authentication. Terminal now falls back to a per-host password prompt for SSH config connections and handles keyboard-interactive prompts and encrypted key passphrases. The fixture used test credentials on a loopback SSH service.
 
-协议/配置测试现有 9 项，新增缺省密钥不可用时的密码回退、keyboard-interactive 验证码及取消认证清理。Electron 界面测试从 config 别名发起连接，在弹窗中输入测试密码并连接成功。
+The protocol and configuration suite had nine tests at this release. New coverage included password fallback when no default key was available, keyboard-interactive verification codes, and cleanup when authentication was cancelled. The Electron test connected using an SSH config alias and a test password from the prompt.
 
-修复 Electron 45 异步剪贴板 API 的调用方式。使用真实鼠标 Shift+拖选和系统剪贴板验证右键复制、无选区右键粘贴、Ctrl+C/Ctrl+Shift+C、工具栏复制及括号粘贴；测试同时开启 TUI 鼠标报告，验证右键不重复发送到远端。测试在内存中备份并恢复原剪贴板格式，内容不输出到日志。
+Clipboard handling was updated for Electron 45's asynchronous clipboard API. Tests use actual Shift+drag selection and the system clipboard to cover right-click copy and paste, Ctrl+C, Ctrl+Shift+C, toolbar copy, and bracketed paste. With TUI mouse reporting enabled, the right-click is still handled once. The suite backs up and restores existing clipboard formats in memory and leaves their contents out of logs.
 
-## 0.2.0 字体、公式与 SSH config
+## 0.2.0 Fonts, math, and SSH config
 
-已通过 6 项协议/配置测试：包含 Host 通配/否定匹配、首值优先、大小写指令、带空格私钥路径、Include 与条件 Include、循环检测、配置私钥自动读取、加密 IdentityFile 经真实 ProxyJump 连接，以及每一跳的主机指纹校验。测试使用隔离临时 config，不改写用户配置，不连接用户的真实主机。
+Six protocol and configuration tests passed. They covered `Host` patterns and negation, first-value precedence, case-insensitive directives, key paths containing spaces, unconditional and conditional `Include`, cycle detection, automatic key loading, an encrypted `IdentityFile` through a real `ProxyJump` connection, and host fingerprint checks at each hop. They used isolated temporary config and loopback fixtures.
 
-Electron 界面测试验证默认 Comic Mono / NSimSun 本机字体加载、单独数学字体配置、中文/Emoji 1∶2 网格对齐、希腊字母单列。通过真实 SSH 发送测试行并读取终端光标位置报告，验证 ZWJ Emoji、国旗、键帽和带变体选择符的心形都是两列；DOM 模式另用文本 Range 测量英文、中文和 Emoji 的实际布局宽度。
+Electron tests verified Comic Mono and NSimSun loading, a separate math font chain, one-cell English and Greek, and two-cell CJK and emoji. Tests sent text through SSH and used the terminal cursor-position response to verify that ZWJ emoji, flags, keycaps, and variation-selector hearts each occupy two columns. DOM tests also measured English, Chinese, and emoji layout with DOM ranges.
 
-已验证四种 LaTeX 分隔符、行内/独立公式、希腊字母、分式、积分、求和、矩阵、代码内不解析公式、危险命令拒绝和原始 HTML 样式清洗，并人工检查公式截图。KaTeX 数学字体在应用目录本地加载；终端的 Comic Mono / NSimSun / Emoji / Cambria Math 来自系统字体。
+The reader was tested with all four LaTeX delimiters, inline and display formulas, Greek letters, fractions, superscripts and subscripts, integrals, sums, matrices, code spans, unsafe commands, and raw HTML style sanitization. Formula screenshots were reviewed manually. KaTeX fonts load from the application bundle, and Comic Mono, NSimSun, emoji fonts, and Cambria Math use locally installed fonts.
 
-界面测试还从主机选择器选中隔离 config 别名并连接到真实本机 SSH 服务；保留原有三万行输出、标签切换、备用屏幕与渲染模式测试。详细测量/截图继续输出到 `test-results`。
+The UI suite also connected to a loopback SSH service through an alias in an isolated config file and retained testing for 30,000 lines of output, tab switching, alternate screen, and renderer modes. Measurements and screenshots are written to `test-results/`.
 
-## 0.1.0 基线
+## 0.1.0 Baseline
 
-2026-11-22，当前 Windows x64 工作站，Electron 45.4.1、xterm.js 6.0.0。
+The baseline was tested on November 22, 2026 on a Windows x64 workstation using Electron 45.4.1 and xterm.js 6.0.0.
 
-已通过 `npm test` 的真实本机 SSH 协议测试，以及 `npm run test:ui` 的 Electron 界面测试；运行和开发依赖 `npm audit` 均为 0 个已知漏洞。Electron 二进制从镜像下载后，使用 npm Electron 包所带官方 SHA256 校验值核对一致。
+The loopback SSH suite (`npm test`) and Electron UI suite (`npm run test:ui`) passed. The audit reported zero known vulnerabilities in the runtime and development dependencies at the time. The Electron binary was downloaded from a mirror and matched the SHA-256 checksum published with the npm package.
 
-生成 Windows 便携包后，还直接针对 `release/Silk-Terminal-0.1.0/SilkTerminal.exe` 跑通同一完整界面测试，确认打包目录启动、SSH 运行依赖和资源路径有效。
+The full UI suite also passed against the portable executable at `release/Silk-Terminal-0.1.0/SilkTerminal.exe`, verifying packaged startup, runtime SSH dependencies, and resource paths.
 
-界面测试使用真实 SSH2 连接与模拟远端 PTY，不等同于 Linux/Vim/Codex/Claude 实机验证。真实服务器凭据未提供，没有连接用户服务器。
+The UI suite used a real ssh2 connection to a simulated remote PTY on loopback. Real Linux installations and Vim, Codex CLI, and Claude CLI remained outside that validation.
 
-一次自动化负载：30,000 行，3,360,020 字节，四个标签；包含中文、Emoji、多色输出、后台接收、备用屏幕、字体配置与 Markdown 清洗。
+One automated workload transferred 30,000 lines and 3,360,020 bytes across a four-tab scenario with Chinese, emoji, colored output, background reception, alternate screen, font settings, and Markdown sanitization.
 
-| 模式 | 输出到可提取快照的耗时 | 常见标签点击耗时（自动化开销在内） | 首次标签切换 |
+| Renderer | Output to snapshot | Typical tab click, including automation | First tab switch |
 | --- | --- | --- | --- |
-| WebGL | 约 2.04 秒 | 约 28–46 ms | 约 114 ms |
-| DOM | 约 2.18 秒 | 约 16–32 ms | 约 145 ms |
+| WebGL | About 2.04 s | About 28–46 ms | About 114 ms |
+| DOM | About 2.18 s | About 16–32 ms | About 145 ms |
 
-此测量包含 SSH、终端解析、Markdown 快照及 Playwright 调度，不是纯渲染器速度。由于 DOM 在当前测试中后续切换更快且 GPU 进程工作集更低，将 DOM 设为默认；用户可按硬件和持续输出负载选择 WebGL。不能以一次测试承诺所有机器无卡顿。
+These measurements include SSH transfer, terminal parsing, the Markdown snapshot, and Playwright scheduling. In this run, DOM had faster subsequent tab switches and a smaller GPU process working set, which informed the choice of default renderer. Results depend on hardware and sustained output.
 
-负载后的瞬时工作集：DOM 下 Browser 约 106 MiB、Tab 约 445 MiB、GPU 约 324 MiB、Utility 约 46 MiB；WebGL 对应约 105、471、491、45 MiB。工作集包含共享和暂存页面，不能直接相加作为独占内存；GPU 进程内存不等于显存。测试会频繁创建 Markdown 快照、截屏与分配测试数据；不是空闲稳定占用数据。`percentCPUUsage` 首次读取为 0，不能据此声称 CPU 零开销。当前没有专用显存或长期 CPU 基准，后续应在真实工作负载下用系统分析工具测量。
+After the workload, DOM working sets were about 106 MiB for the browser, 445 MiB for the tab, 324 MiB for the GPU process, and 46 MiB for the utility process. WebGL values were about 105, 471, 491, and 45 MiB. These figures include shared and transient pages. The suite took screenshots and allocated Markdown snapshots and test data. The first CPU sample returned zero, and dedicated GPU-memory and long-running CPU measurements were outside this run.
 
-详细测量由测试输出到 `test-results/report.json`，截图到 `test-results/terminal.png`。这些运行产物在 `.gitignore` 中排除。
+The suite writes detailed measurements to `test-results/report.json` and a screenshot to `test-results/terminal.png`. Git ignores these generated files.

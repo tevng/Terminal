@@ -11,9 +11,9 @@ await mkdir(target, {recursive:true});
 await cp(path.dirname(exe),target,{recursive:true});
 const appDir = path.join(target,'resources/app');
 await mkdir(appDir,{recursive:true});
-for (const name of ['electron','dist']) await cp(name,path.join(appDir,name),{recursive:true});
+for (const name of ['electron','dist','i18n']) await cp(name,path.join(appDir,name),{recursive:true});
 await writeFile(path.join(appDir,'package.json'),JSON.stringify({name:pkg.name,productName:'Terminal',version:pkg.version,main:pkg.main}));
-// Frontend dependencies are bundled. Copy only the pure JS SSH runtime dependency tree.
+// Frontend dependencies are bundled. Copy main-process packages and native PTY binaries.
 const copied=new Set();
 async function copyPackage(name, parentRequire=require) {
   if(copied.has(name))return;
@@ -21,12 +21,18 @@ async function copyPackage(name, parentRequire=require) {
   try {file=parentRequire.resolve(`${name}/package.json`);}catch(e){if(e.code!=='ERR_PACKAGE_PATH_NOT_EXPORTED')throw e;file=path.resolve('node_modules',name,'package.json');}
   const info=JSON.parse(await readFile(file,'utf8'));
   copied.add(name);
-  await cp(path.dirname(file),path.join(appDir,'node_modules',name),{recursive:true,filter:src=>!src.includes(`${path.sep}test${path.sep}`) && !src.includes(`${path.sep}tests${path.sep}`)});
+  const directory = path.dirname(file);
+  await cp(directory,path.join(appDir,'node_modules',name),{recursive:true,filter:src=>{
+    const [root, platform] = path.relative(directory, src).split(path.sep);
+    if (name === 'node-pty' && root === 'prebuilds' && platform && platform !== `win32-${process.arch}`) return false;
+    return !src.includes(`${path.sep}test${path.sep}`) && !src.includes(`${path.sep}tests${path.sep}`) && path.extname(src) !== '.pdb';
+  }});
   const nested=createRequire(file);
   for(const dep of Object.keys(info.dependencies||{}))await copyPackage(dep,nested);
 }
 await copyPackage('ssh2');
 await copyPackage('ssh-config');
+await copyPackage('node-pty');
 const branded=path.join(target,'Terminal.exe');
 await rename(path.join(target,'electron.exe'),branded);
 await rcedit(branded, {icon:path.resolve('assets/terminal.ico'),'file-version':pkg.version,'product-version':pkg.version,

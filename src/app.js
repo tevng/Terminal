@@ -8,12 +8,33 @@ import { defaults, calibrateFonts, sanitizeOptions } from './fonts.js';
 import {wireClipboard} from './clipboard.js';
 import {resolveAppearance} from './themes.js';
 import {installAppearance} from './appearance.js';
+import { defaultLocale, locales, normalizeLocale, translate } from '../i18n/index.cjs';
+import { cjkSample } from '../i18n/samples.json';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 import './themes.css';
 const $ = id => document.getElementById(id), api = window.silk;
-let settings = { profiles: [], appearance: defaults }, options = defaults, active = null, counter = 0, configHosts = [];
-const sessions = new Map(), byRemote = new Map();
+let settings = { profiles: [], appearance: defaults, locale: defaultLocale };
+let options = defaults, active = null, counter = 0, configResult, configError;
+let locale = defaultLocale;
+const t = (key, values) => translate(locale, key, values);
+const sessions = new Map(), bySessionId = new Map();
+const localizedAttributes = [['title', 'title'], ['placeholder', 'placeholder'], ['label', 'aria-label']];
+function applyLocale(next) {
+  const markdownSource = $('markdown-source');
+  const isDefaultMarkdown = markdownSource.value === t('reader.empty');
+  locale = normalizeLocale(next);
+  document.documentElement.lang = locale;
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const [suffix, attribute] of localizedAttributes) {
+    const key = `data-i18n-${suffix}`;
+    for (const node of document.querySelectorAll(`[${key}]`)) node.setAttribute(attribute, t(node.getAttribute(key)));
+  }
+  showConfig();
+  status();
+  if (isDefaultMarkdown) markdownSource.value = t('reader.empty');
+  if (!$('markdown-panel').hidden) void renderMarkdown();
+}
 let inputRecoveryGeneration=0,inputRecoveryPending=false;
 const nextInputFrame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
 function requestInputRecovery(){inputRecoveryPending=true;void restoreTerminalInput();}
@@ -37,7 +58,18 @@ function closeCredentialDialog(dialog){
   dialog.close();
 }
 const authDialog=document.createElement('dialog');authDialog.id='auth-dialog';
-authDialog.innerHTML='<form id="auth-form"><div class="eyebrow">SSH AUTHENTICATION</div><h2 id="auth-title"></h2><p id="auth-instructions" class="muted"></p><div id="auth-fields"></div><p class="muted">仅用于本次 SSH 认证，不保存密码、口令或验证码。</p><div class="dialog-actions"><button type="button" id="auth-cancel">取消连接</button><button class="primary" type="submit">继续连接</button></div></form>';
+authDialog.innerHTML = `<form id="auth-form">
+  <div class="eyebrow" data-i18n="auth.title"></div>
+  <h2 id="auth-title"></h2>
+  <p id="auth-instructions" class="muted"></p>
+  <div id="auth-fields"></div>
+  <p class="muted" data-i18n="auth.sessionOnly"></p>
+  <div class="dialog-actions">
+    <button type="button" id="auth-cancel" data-i18n="ssh.cancelConnection"></button>
+    <button class="primary" type="submit" data-i18n="auth.continue"></button>
+  </div>
+</form>`;
+authDialog.setAttribute('aria-labelledby', 'auth-title');
 document.body.append(authDialog);
 const authQueue=[];let currentAuth=null;
 function showNextAuth(){
@@ -45,9 +77,9 @@ function showNextAuth(){
   currentAuth=authQueue.shift();const {session:s,event}=currentAuth;
   if(!sessions.has(s.key)||s.state==='closed'){currentAuth=null;showNextAuth();return;}
   activate(s.key);$('auth-title').textContent=`${event.username}@${event.alias||event.host}`;
-  $('auth-instructions').textContent=String(event.instructions||'服务器请求认证').slice(0,2000);$('auth-fields').replaceChildren();
+  $('auth-instructions').textContent=String(event.instructions||t('auth.serverRequested')).slice(0,2000);$('auth-fields').replaceChildren();
   for(const prompt of event.prompts.slice(0,16)){
-    const label=document.createElement('label');label.textContent=String(prompt.prompt||'认证信息').slice(0,300);
+    const label=document.createElement('label');label.textContent=String(prompt.prompt||t('auth.response')).slice(0,300);
     const input=document.createElement('input');input.type=prompt.echo?'text':'password';input.autocomplete='off';input.maxLength=4096;label.append(input);$('auth-fields').append(label);
   }
   authDialog.showModal();$('auth-fields').querySelector('input')?.focus();
@@ -65,17 +97,7 @@ async function answerAuth(answers){
 $('auth-form').onsubmit=event=>{event.preventDefault();void answerAuth([...$('auth-fields').querySelectorAll('input')].map(input=>input.value));};
 $('auth-cancel').onclick=()=>void answerAuth(null);authDialog.oncancel=event=>{event.preventDefault();void answerAuth(null);};
 const fontStyle = document.createElement('style'); document.head.append(fontStyle);
-const unicodeLabel = document.createElement('label'); unicodeLabel.textContent = '字符宽度 / Emoji 组合';
-const unicodeSelect = document.createElement('select'); unicodeSelect.id = 'unicode';
-unicodeSelect.add(new Option('Unicode 15 字素簇（实验性，支持组合 Emoji）','15-graphemes'));
-unicodeSelect.add(new Option('Unicode 11（兼容传统 wcwidth）','11'));
-unicodeLabel.append(unicodeSelect); $('cursor-blink').closest('label').before(unicodeLabel);
-const mathLabel = document.createElement('label'); mathLabel.textContent = '希腊字母 / 数学符号字体及 fallback';
-const mathInput = document.createElement('input'); mathInput.id = 'font-math'; mathLabel.append(mathInput); $('font-fallback').closest('label').before(mathLabel);
-const fontInfo = document.createElement('p'); fontInfo.id = 'font-info'; fontInfo.className = 'muted'; $('font-preview').after(fontInfo);
-$('auth').add(new Option('使用 ~/.ssh/config 自动认证','config'));
-const configInfo = document.createElement('p'); configInfo.id = 'config-info'; configInfo.className = 'muted'; $('saved-profile').closest('label').after(configInfo);
-const refreshConfig = document.createElement('button'); refreshConfig.id = 'config-refresh'; refreshConfig.type = 'button'; refreshConfig.textContent = '刷新 SSH config'; configInfo.after(refreshConfig);
+for (const choice of locales) $('language').add(new Option(translate(choice, 'language.name'), choice));
 let fontFamily, toastTimer;
 const systemAppearance=matchMedia('(prefers-color-scheme: light)');
 let theme={...resolveAppearance(defaults,systemAppearance.matches).terminal.colors};
@@ -87,10 +109,10 @@ function applyAppearance(){
   for(const s of sessions.values())s.term.options.theme={...theme};
 }
 systemAppearance.addEventListener('change',()=>{if(options.uiTheme==='system')applyAppearance();});
-const appearance=installAppearance({getOptions:()=>options,getFont:()=>fontFamily||'monospace',onClose:()=>current()?.term.focus(),save:async choice=>{
+const appearance=installAppearance({t,getOptions:()=>options,getFont:()=>fontFamily||'monospace',onClose:()=>current()?.term.focus(),save:async choice=>{
   const next=sanitizeOptions({...options,...choice});await api.saveSettings({...settings,appearance:next});options=next;settings.appearance=next;applyAppearance();
 }});
-const appearanceButton=document.createElement('button');appearanceButton.id='appearance-open';appearanceButton.textContent='◐ 外观';appearanceButton.title='界面主题与终端配色';appearanceButton.onclick=()=>appearance.open();$('settings-open').before(appearanceButton);
+$('appearance-open').onclick = () => appearance.open();
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4000); }
 function report(e) { toast(e.message || String(e)); }
 async function applyFonts() {
@@ -100,12 +122,14 @@ async function applyFonts() {
   $('markdown-source').style.fontFamily=fontFamily;
   $('font-preview').style.fontSize = `${options.fontSize}px`;
   $('font-preview').replaceChildren();
-  for (const [text, cols] of [['A',1],['B',1],['中',2],['文',2],['🥳',2],['🧑‍💻',2],['α',1],['∑',1]]) {
+  const cjkCells = [...cjkSample].map(text => [text, 2]);
+  for (const [text, cols] of [['A',1],['B',1],...cjkCells,['🥳',2],['🧑‍💻',2],['α',1],['∑',1]]) {
     const span = document.createElement('span'); span.textContent = text; span.dataset.columns = cols;
     span.style.cssText = `display:inline-block;width:${result.cellWidth * cols}px;text-align:center;border-bottom:1px solid #527b6c;vertical-align:middle;overflow:hidden;`; $('font-preview').append(span);
   }
   const missing = [['SilkLatin0',options.latin.split(',')[0]],['SilkCJK0',options.cjk.split(',')[0]],['SilkEmoji0',options.emoji.split(',')[0]],['SilkMath0',options.math.split(',')[0]]].filter(([alias]) => !result.loaded[alias]).map(([,name])=>name);
-  fontInfo.textContent = `英文 1 列 · 中文 2 列 · Emoji 2 列 · 希腊字母 1 列；基准 ${result.cellWidth.toFixed(2)} px。${missing.length ? `未加载首选字体：${missing.join('、')}，已回退。` : '首选字体均已加载。'}`;
+  const fontStatus = missing.length ? t('settings.missingFonts', { fonts: missing.join(', ') }) : t('settings.fontsLoaded');
+  $('font-info').textContent = `${t('settings.widths', { width: result.cellWidth.toFixed(2) })} ${fontStatus}`;
 }
 async function persist() { await api.saveSettings(settings); }
 function current() { return sessions.get(active); }
@@ -127,9 +151,22 @@ function attachGPU(s) {
 function fit(s = current()) { if (!s || s.key !== active) return; try { s.fit.fit(); } catch {} status(); }
 function status() {
   const s = current();
-  $('connection-state').textContent = s ? `${s.state === 'ready' ? '● 已连接' : s.state === 'connecting' ? '◌ 连接中' : '○ 已断开'}  ${s.profile.username}@${s.profile.host}` : '○ 就绪';
-  $('session-info').textContent = s ? `${s.term.cols} × ${s.term.rows}  ·  xterm-256color  ·  ${s.term.buffer.active.type === 'alternate' ? '全屏 / TUI' : '标准缓冲区'}` : 'SSH ONLY · 不含远程文件管理';
-  $('resource-info').textContent = s ? `${s.gpu ? 'WebGL' : 'DOM'} · ${options.scrollback.toLocaleString()} 行历史上限 · ${sessions.size} 个标签` : 'Terminal 0.3';
+  $('reconnect').hidden = !s || Boolean(s.profile.shell);
+  if (!s) {
+    $('connection-state').textContent = `○ ${t('terminal.ready')}`;
+    $('session-info').textContent = t('home.localAndSsh');
+    $('resource-info').textContent = 'Terminal 0.3';
+    return;
+  }
+  const symbol = s.state === 'ready' ? '●' : s.state === 'connecting' ? '◌' : '○';
+  const state = s.state === 'ready' ? 'terminal.connected' : s.state === 'connecting' ? 'terminal.connecting' : 'terminal.disconnected';
+  const label = s.profile.shell ? t('local.status', { shell: s.profile.name }) : `${t(state)}  ${s.profile.username}@${s.profile.host}`;
+  $('connection-state').textContent = `${symbol} ${label}`;
+  const buffer = t(s.term.buffer.active.type === 'alternate' ? 'terminal.alternate' : 'terminal.normal');
+  $('session-info').textContent = `${s.term.cols} × ${s.term.rows}  ·  xterm-256color  ·  ${buffer}`;
+  $('resource-info').textContent = t('terminal.resources', {
+    renderer: s.gpu ? 'WebGL' : 'DOM', scrollback: options.scrollback.toLocaleString(locale), tabs: sessions.size
+  });
 }
 function activate(key) {
   if (active !== key) { const old = current(); releaseGPU(old); if (old) { old.element.hidden = true; old.tab.classList.remove('active'); } }
@@ -138,12 +175,12 @@ function activate(key) {
   if (s) { s.element.hidden = false; s.tab.classList.add('active'); fit(s); attachGPU(s); s.term.refresh(0, s.term.rows - 1); s.term.focus(); }
   status();
 }
-function removeSession(s,{closeRemote=true}={}) {
+function removeSession(s,{closeBackend=true}={}) {
   if(!sessions.has(s.key))return;
   const keys=[...sessions.keys()],index=keys.indexOf(s.key),neighbor=keys[index-1]??keys[index+1]??null;
   s.state='closed';
   cancelSessionAuth(s);
-  if (s.remote) { byRemote.delete(s.remote);if(closeRemote)api.close(s.remote).catch(report); }
+  if (s.sessionId) { bySessionId.delete(s.sessionId);if(closeBackend)api.close(s.sessionId).catch(report); }
   releaseGPU(s); s.term.dispose(); s.element.remove(); s.tab.remove(); sessions.delete(s.key);
   if (active === s.key) { active = null; activate(neighbor); }else status();
   if(!sessions.size){$('find-bar').hidden=true;$('markdown-panel').hidden=true;}
@@ -152,24 +189,27 @@ function newSession(profile) {
   const key = ++counter, element = document.createElement('div'); element.className = 'terminal-host'; element.hidden = true; $('workspace').append(element);
   const tab = document.createElement('div'); tab.className = 'tab'; tab.setAttribute('role','tab');
   const label = document.createElement('button'); label.className = 'tab-label'; label.textContent = profile.name || `${profile.username}@${profile.host}`; label.onclick = () => activate(key);
-  const close = document.createElement('button'); close.className = 'tab-close'; close.textContent = '×'; close.title = '关闭会话';
+  const close = document.createElement('button'); close.className = 'tab-close'; close.textContent = '×';
+  close.dataset.i18nTitle = close.dataset.i18nLabel = 'terminal.closeTab';
+  close.title = t('terminal.closeTab'); close.setAttribute('aria-label', close.title);
   tab.append(label,close); $('tabs').append(tab);
   const term = new Terminal({ fontFamily, fontSize: options.fontSize, lineHeight: options.lineHeight, scrollback: options.scrollback,
     theme:{...theme}, cursorBlink: options.cursorBlink, cursorStyle: 'block', allowProposedApi: true,
     allowTransparency: false, rescaleOverlappingGlyphs: true, minimumContrastRatio: 1, altClickMovesCursor: false, scrollOnUserInput: true, smoothScrollDuration: 0,
     linkHandler: { activate: () => {} } });
   const fitter = new FitAddon(), search = new SearchAddon(); term.loadAddon(fitter); term.loadAddon(search); term.loadAddon(new Unicode11Addon()); term.loadAddon(new UnicodeGraphemesAddon()); term.unicode.activeVersion = options.unicode === '11' ? '11' : '15-graphemes';
-  const s = { key, profile: { name: profile.name, host: profile.host, port: profile.port, username: profile.username, auth: profile.auth }, term, fit: fitter, search, element, tab, state: 'connecting', remote: null, gpu: null };
+  const s = { key, profile: { name: profile.name, host: profile.host, port: profile.port, username: profile.username, auth: profile.auth, shell: profile.shell }, term, fit: fitter, search, element, tab, state: 'connecting', sessionId: null, gpu: null };
   sessions.set(key,s); close.onclick = () => {
-    if (s.state !== 'closed' && !confirm('关闭此 SSH 会话？远程前台任务可能会退出；需要保留任务时请先使用 tmux。')) return;
+    const message = t(s.profile.shell ? 'local.closeConfirm' : 'ssh.closeConfirm');
+    if (s.state !== 'closed' && !confirm(message)) return;
     removeSession(s);
   };
   element.hidden = false; term.open(element); activate(key);
-  s.clipboard=wireClipboard({element,term,api,ready:()=>s.state==='ready',notify:toast,error:report});
-  term.onData(data => { if (s.state === 'ready') api.input(s.remote, data); });
-  term.onBinary(data => { if (s.state === 'ready') api.input(s.remote, data, true); });
-  term.onResize(({cols, rows}) => { if (s.remote) api.resize(s.remote,cols,rows); });
-  term.onTitleChange(title => { label.textContent = title.slice(0,100) || s.profile.host; });
+  s.clipboard=wireClipboard({element,term,api,t,ready:()=>s.state==='ready',notify:toast,error:report});
+  term.onData(data => { if (s.state === 'ready') api.input(s.sessionId, data); });
+  term.onBinary(data => { if (s.state === 'ready') api.input(s.sessionId, data, true); });
+  term.onResize(({cols, rows}) => { if (s.sessionId) api.resize(s.sessionId,cols,rows); });
+  term.onTitleChange(title => { label.textContent = title.slice(0,100) || s.profile.name || s.profile.host; });
   let bufferType = term.buffer.active.type;
   term.onWriteParsed(() => { if (term.buffer.active.type !== bufferType) { bufferType = term.buffer.active.type; if (active === s.key) status(); } });
   term.attachCustomKeyEventHandler(event => {
@@ -180,39 +220,58 @@ function newSession(profile) {
   });
   return s;
 }
-async function connect(profile) {
+async function startSession(profile) {
   const s = newSession(profile);
+  const size = { cols: s.term.cols, rows: s.term.rows };
   try {
-    const remote=await api.connect(profile,{cols:s.term.cols,rows:s.term.rows});
-    if(!sessions.has(s.key)){await api.close(remote);return;}
-    s.remote=remote;byRemote.set(remote,s);api.resize(remote,s.term.cols,s.term.rows);
+    if (profile.shell) {
+      // Register before spawning so even an immediate prompt or exit can be routed.
+      s.sessionId = `local:${crypto.randomUUID()}`;
+      bySessionId.set(s.sessionId, s);
+      await api.startLocal(s.sessionId, profile.shell, size);
+      return;
+    }
+    const id = await api.connect(profile, size);
+    if (!sessions.has(s.key)) { await api.close(id); return; }
+    s.sessionId = id;
+    bySessionId.set(id, s);
+    api.resize(id, s.term.cols, s.term.rows);
+  } catch (e) {
+    removeSession(s, { closeBackend: false });
+    toast(t(profile.shell ? 'local.startFailed' : 'ssh.connectFailed', { reason: e.message }));
   }
-  catch (e) { removeSession(s,{closeRemote:false});toast(`连接失败：${e.message}`); }
 }
 api.onEvent(event => {
-  const s = byRemote.get(event.id); if (!s) return;
+  const s = bySessionId.get(event.id); if (!s) return;
   if(event.type==='auth'){queueAuth(s,event);return;}
   if(event.type==='auth-cancel'){cancelAuth(event.requestId);return;}
   if (event.type === 'notice') toast(event.message);
-  else if (event.type === 'data') s.term.write(new Uint8Array(event.data), () => { api.ack(event.id,event.seq); });
-  else if (event.type === 'ready') { s.state = 'ready'; api.resize(s.remote,s.term.cols,s.term.rows); status();if(s.key===active)requestInputRecovery(); }
-  else if (event.type === 'error') { s.state = 'closed';toast(`${s.profile.name||s.profile.host}：${event.message}`);status(); }
-  else if (event.type === 'closed') {removeSession(s,{closeRemote:false});}
+  else if (event.type === 'data') s.term.write(typeof event.data === 'string' ? event.data : new Uint8Array(event.data), () => { api.ack(event.id,event.seq); });
+  else if (event.type === 'ready') { s.state = 'ready'; api.resize(s.sessionId,s.term.cols,s.term.rows); status();if(s.key===active && !s.profile.shell)requestInputRecovery(); }
+  else if (event.type === 'error') { s.state = 'closed';toast(t('terminal.sessionError', { name: s.profile.name || s.profile.host, reason: event.message }));status(); }
+  else if (event.type === 'closed') {removeSession(s,{closeBackend:false});}
 });
 function profilesList() {
-  const select = $('saved-profile'); select.replaceChildren(new Option('新建连接',''));
+  const select = $('saved-profile'); select.replaceChildren(new Option(t('ssh.new'), ''));
+  const configHosts = configResult?.hosts || [];
   if(configHosts.length) {
     const group=document.createElement('optgroup');group.label='~/.ssh/config';
-    configHosts.forEach(p=>group.append(new Option(`${p.alias} → ${p.username}@${p.host}:${p.port}${p.proxyJump?'（跳板）':''}`,`config:${p.alias}`)));select.append(group);
+    configHosts.forEach(p=>group.append(new Option(`${p.alias} → ${p.username}@${p.host}:${p.port}${p.proxyJump ? ' ' + t('ssh.configJump') : ''}`,`config:${p.alias}`)));select.append(group);
   }
-  const group=document.createElement('optgroup');group.label='应用内保存';
+  const group=document.createElement('optgroup');group.label=t('ssh.savedGroup');
   settings.profiles.forEach((p,i) => group.append(new Option(p.name || `${p.username}@${p.host}`,String(i))));select.append(group);
 }
-async function loadConfig() {
-  try {const result=await api.listConfig();configHosts=result.hosts;configInfo.textContent=`已读取 ${result.file} · ${result.hosts.length} 个主机别名。Host 通配规则也可用于手动输入的别名。`;profilesList();}
-  catch(e){configHosts=[];configInfo.textContent=`SSH config 读取失败：${e.message}`;profilesList();}
+function showConfig() {
+  $('config-info').textContent = configError ? t('ssh.configReadFailed', { reason: configError.message }) :
+    configResult ? t('ssh.configLoaded', { file: configResult.file, count: configResult.hosts.length }) : '';
+  profilesList();
 }
-refreshConfig.onclick=loadConfig;
+async function loadConfig() {
+  try { configResult = await api.listConfig(); configError = null; }
+  catch (e) { configResult = null; configError = e; }
+  showConfig();
+}
+$('config-refresh').onclick = loadConfig;
 function authFields() {
   const fromConfig=$('auth').value==='config';
   $('key-fields').hidden = !['key','config'].includes($('auth').value); $('key-path').closest('label').hidden=fromConfig;
@@ -229,14 +288,14 @@ async function openConnect(profile) {
 function fillProfile(p) { for (const [id,key] of [['profile-name','name'],['host','host'],['port','port'],['username','username'],['auth','auth']]) $(id).value = p[key] || ''; authFields(); }
 $('saved-profile').onchange = () => {
   const value=$('saved-profile').value;
-  if(value.startsWith('config:')) {const p=configHosts.find(p=>p.alias===value.slice(7));if(p)fillProfile({name:p.alias,host:p.alias,port:p.port,username:p.username,auth:'config'});}
+  if(value.startsWith('config:')) {const p=configResult?.hosts.find(p=>p.alias===value.slice(7));if(p)fillProfile({name:p.alias,host:p.alias,port:p.port,username:p.username,auth:'config'});}
   else {const p=settings.profiles[Number(value)];if(value!=='' && p)fillProfile(p);}
 };
 $('auth').onchange = authFields;
 $('key-choose').onclick = async () => { try { const file = await api.chooseKey(); if (file) $('key-path').value = file; } catch(e) { report(e); } };
 $('connect-form').onsubmit = async e => {
   e.preventDefault(); const p = { name:$('profile-name').value.trim(), host:$('host').value.trim(), port:Number($('port').value), username:$('username').value.trim(), auth:$('auth').value, keyPath:$('key-path').value, password:$('password').value, passphrase:$('passphrase').value };
-  if (p.auth === 'key' && !p.keyPath) { $('connect-error').textContent = '请选择私钥文件'; return; }
+  if (p.auth === 'key' && !p.keyPath) { $('connect-error').textContent = t('ssh.requireKey'); return; }
   $('connect-submit').disabled = true;
   try {
     if ($('save-profile').checked && p.auth!=='config') {
@@ -245,31 +304,52 @@ $('connect-form').onsubmit = async e => {
       if (i >= 0) settings.profiles[i] = clean; else settings.profiles.push(clean);
       await persist();
     }
-    closeCredentialDialog($('connect-dialog'));await connect(p);
+    closeCredentialDialog($('connect-dialog'));await startSession(p);
   } catch (err) { $('connect-error').textContent = err.message; } finally { $('connect-submit').disabled = false; }
 };
 $('delete-profile').onclick = async () => { const value = $('saved-profile').value; if (!value || value.startsWith('config:')) return; settings.profiles.splice(Number(value),1); try { await persist(); profilesList(); } catch(e) { report(e); } };
 for (const id of ['new-tab','welcome-connect']) $(id).onclick = () => openConnect();
-$('reconnect').onclick = () => { const s = current(); if (s) openConnect(s.profile); };
+const localDialog = $('local-dialog');
+for (const id of ['new-local', 'welcome-local']) $(id).onclick = () => localDialog.showModal();
+localDialog.addEventListener('close', () => current()?.term.focus());
+$('local-form').onsubmit = event => {
+  event.preventDefault();
+  const shell = event.submitter.value;
+  localDialog.close();
+  void startSession({ shell, name: event.submitter.textContent });
+};
+$('reconnect').onclick = () => { const s = current(); if (s && !s.profile.shell) openConnect(s.profile); };
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => {const dialog=$(button.dataset.close);if(dialog.id==='connect-dialog'){closeCredentialDialog(dialog);requestInputRecovery();}else dialog.close();});
 $('connect-dialog').addEventListener('cancel',event=>{event.preventDefault();closeCredentialDialog($('connect-dialog'));requestInputRecovery();});
 function settingsFields(o) { for (const [id,key] of [['font-latin','latin'],['font-cjk','cjk'],['font-math','math'],['font-emoji','emoji'],['font-fallback','fallback'],['font-size','fontSize'],['line-height','lineHeight'],['scrollback','scrollback'],['renderer','renderer'],['unicode','unicode']]) $(id).value = o[key]; $('cursor-blink').checked = o.cursorBlink; }
 function readFields() { return sanitizeOptions({ ...options,fontPresetVersion:2,latin:$('font-latin').value,cjk:$('font-cjk').value,math:$('font-math').value,emoji:$('font-emoji').value,fallback:$('font-fallback').value,fontSize:$('font-size').value,lineHeight:$('line-height').value,scrollback:$('scrollback').value,renderer:$('renderer').value,unicode:$('unicode').value,cursorBlink:$('cursor-blink').checked }); }
-$('settings-open').onclick = () => { settingsFields(options); $('settings-error').textContent = ''; $('settings-dialog').showModal(); };
+$('settings-open').onclick = () => { settingsFields(options); $('language').value = locale; $('settings-error').textContent = ''; $('settings-dialog').showModal(); };
 $('settings-reset').onclick = () => { settingsFields(defaults); };
 $('settings-form').onsubmit = async e => {
   e.preventDefault(); const next = readFields();
   try {
-    await api.saveSettings({ ...settings, appearance: next }); options = next; settings.appearance = next;applyAppearance();await applyFonts();
+    const nextLocale = normalizeLocale($('language').value);
+    const updated = { ...settings, appearance: next, locale: nextLocale };
+    await api.saveSettings(updated);
+    settings = updated; options = next;
+    if (locale !== nextLocale) applyLocale(nextLocale);
+    applyAppearance(); await applyFonts();
     // Load local font aliases before measuring xterm's cell width.
-    await document.fonts.load(`${options.fontSize}px ${fontFamily}`, 'A中🥳').catch(() => {}); await document.fonts.ready;
+    await document.fonts.load(`${options.fontSize}px ${fontFamily}`, `A${cjkSample}🥳`).catch(() => {}); await document.fonts.ready;
     for (const s of sessions.values()) { releaseGPU(s); s.gpuFailed = false; Object.assign(s.term.options, {fontFamily,fontSize:options.fontSize,lineHeight:options.lineHeight,scrollback:options.scrollback,cursorBlink:options.cursorBlink}); s.term.unicode.activeVersion = options.unicode === '11' ? '11' : '15-graphemes'; }
     $('settings-dialog').close(); fit(); attachGPU(current()); status();
   } catch(e) { $('settings-error').textContent = e.message; }
 };
 let resizing;
 new ResizeObserver(() => { clearTimeout(resizing); resizing = setTimeout(() => fit(), 60); }).observe($('workspace'));
-function search(back = false) { const s = current(); if (!s) return; const query = $('find-input').value; if (!query) { s.search.clearDecorations(); return; } const found = s.search[back ? 'findPrevious' : 'findNext'](query, { incremental:false }); $('find-result').textContent = found ? '已找到' : '无匹配'; }
+function search(back = false) {
+  const s = current(); if (!s) return;
+  const query = $('find-input').value, result = $('find-result');
+  if (!query) { s.search.clearDecorations(); delete result.dataset.i18n; result.textContent = ''; return; }
+  const found = s.search[back ? 'findPrevious' : 'findNext'](query, { incremental: false });
+  result.dataset.i18n = found ? 'search.found' : 'search.notFound';
+  result.textContent = t(result.dataset.i18n);
+}
 $('find-open').onclick = () => { $('find-bar').hidden = false; $('find-input').focus(); };
 $('find-close').onclick = () => { $('find-bar').hidden = true; current()?.search.clearDecorations(); current()?.term.focus(); };
 $('find-input').onkeydown = e => { if (e.key === 'Enter') search(e.shiftKey); if (e.key === 'Escape') $('find-close').click(); };
@@ -280,10 +360,10 @@ $('copy-output').onmousedown=event=>event.preventDefault();
 let markdownVersion = 0;
 async function renderMarkdown() {
   const version = ++markdownVersion, source = $('markdown-source').value.slice(0,500000);
-  try { const { render } = await import('./markdown.js'); if (version === markdownVersion) render(source, $('markdown-content')); } catch(e) { report(e); }
+  try { const { render } = await import('./markdown.js'); if (version === markdownVersion) render(source, $('markdown-content'), t); } catch(e) { report(e); }
 }
 function snapshot() {
-  const s = current(); if (!s) { $('markdown-source').value = '# Markdown 阅读\n\n连接后选择终端文本，或点击“编辑源文本”粘贴 Markdown。'; renderMarkdown(); return; }
+  const s = current(); if (!s) { $('markdown-source').value = t('reader.empty'); renderMarkdown(); return; }
   let text = s.term.getSelection();
   if (!text) {
     const buffer = s.term.buffer.active, lines = []; let chunk = '', total = 0;
@@ -314,8 +394,10 @@ document.addEventListener('keydown', async e => {
     e.preventDefault(); await current().clipboard.paste();
   }
 });
-try { settings = await api.loadSettings(); options = sanitizeOptions(settings.appearance); settings.appearance = options;applyAppearance();await applyFonts(); }
-catch(e) {applyAppearance();await applyFonts(); report(e); }
-profilesList();
+try { settings = await api.loadSettings(); } catch (e) { report(e); }
+options = sanitizeOptions(settings.appearance); settings.appearance = options;
+applyLocale(settings.locale);
+applyAppearance();
+await applyFonts();
 await loadConfig();
 status();

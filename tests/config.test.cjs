@@ -25,8 +25,8 @@ test('SSH config: conditional Include, cycles and no command execution',async t=
   await fs.writeFile(path.join(home,'.ssh','target.conf'),'User included\nHost child\n User childuser\n');
   const store=new ConfigStore({home});await store.load();
   assert.equal(store.compute('target').username,'included');assert.equal(store.compute('other').username,'other');
-  await fs.writeFile(file,'Include config\n');await assert.rejects(()=>store.load(),/循环/);
-  await fs.writeFile(file,'Host a\n ProxyJump b\nHost b\n ProxyJump a\n');await store.load();assert.throws(()=>store.plan('a'),/循环/);
+  await fs.writeFile(file,'Include config\n');await assert.rejects(()=>store.load(),/contains a cycle/);
+  await fs.writeFile(file,'Host a\n ProxyJump b\nHost b\n ProxyJump a\n');await store.load();assert.throws(()=>store.plan('a'),/contains a cycle/);
   await fs.writeFile(file,'Host a\n ProxyCommand touch NEVER_RUN\n');await store.load();assert.throws(()=>store.plan('a'),/ProxyCommand/);
   await fs.writeFile(file,'Host a\n User test\nMatch exec "touch NEVER_RUN"\n User attacker\n');await store.load();assert.equal(store.compute('a').username,'test');assert.throws(()=>store.plan('a'),/Match/);
   await assert.rejects(()=>fs.stat(path.join(home,'NEVER_RUN')),e=>e.code==='ENOENT');

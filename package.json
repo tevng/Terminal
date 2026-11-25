@@ -1,7 +1,7 @@
 {
   "name": "silk-ssh-terminal",
   "version": "0.3.1",
-  "description": "SSH-only terminal with script-aware fonts and bounded output flow",
+  "description": "SSH and local terminal with script-aware fonts and bounded output flow",
   "main": "electron/main.cjs",
   "private": true,
   "scripts": {
@@ -22,6 +22,7 @@
     "dompurify": "^3.3.0",
     "katex": "^0.19.1",
     "marked": "^17.0.0",
+    "node-pty": "1.1.0",
     "ssh-config": "^5.3.1",
     "ssh2": "^1.17.0"
   },

@@ -1,4 +1,5 @@
 import {uiThemes,terminalSchemes} from './themes.js';
+import { cjkSample } from '../i18n/samples.json';
 export const defaults = {
   latin: 'Comic Mono, Consolas', cjk: 'NSimSun, SimSun', math: 'Cambria Math, STIX Two Math, Segoe UI Symbol',
   emoji: 'Segoe UI Emoji, Noto Color Emoji', fallback: 'Consolas, NSimSun, Segoe UI Symbol',
@@ -28,7 +29,7 @@ export function fontCSS(options, adjustments = {}) {
 export async function calibrateFonts(options, style) {
   const raw = fontCSS(options); style.textContent = raw.css;
   const ctx = document.createElement('canvas').getContext('2d');
-  const samples = { Latin:'W', CJK:'中', Math:'α', Emoji:'🥳' }, loaded = {}, adjustments = {};
+  const samples = { Latin:'W', CJK:cjkSample[0], Math:'α', Emoji:'🥳' }, loaded = {}, adjustments = {};
   await Promise.all(Object.entries(samples).flatMap(([group, sample]) => families(options[group === 'CJK' ? 'cjk' : group.toLowerCase()]).map(async (_, i) => {
     const alias = `Silk${group}${i}`;
     try { loaded[alias] = (await document.fonts.load(`${options.fontSize}px "${alias}"`, sample)).length > 0; } catch { loaded[alias] = false; }

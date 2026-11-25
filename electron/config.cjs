@@ -2,6 +2,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const SSHConfig = require('ssh-config');
+const { english } = require('../i18n/index.cjs');
 const values = value => (Array.isArray(value) ? value : [value]).map(v => typeof v === 'object' ? v.val : v).filter(v => typeof v === 'string');
 function matches(patterns, host) {
   let yes = false;
@@ -13,7 +14,7 @@ function matches(patterns, host) {
   return yes;
 }
 class ConfigStore {
-  constructor({home=os.homedir(), file=path.join(home,'.ssh','config')}={}) { this.home=home;this.file=file;this.root=path.join(home,'.ssh'); }
+  constructor({home=os.homedir(), file=path.join(home,'.ssh','config'), t=english}={}) { this.home=home;this.file=file;this.root=path.join(home,'.ssh');this.t=t; }
   expand(value, tokens={}) {
     let result = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g,(_m,key)=>process.env[key] || '');
     if (/^~[\\/]/.test(result)) result=path.join(this.home,result.slice(2));
@@ -23,11 +24,11 @@ class ConfigStore {
   async load() {
     const budget={bytes:0,files:0};
     const read=async(file,stack=[])=>{
-      if (stack.length>=8) throw Error('SSH Include 嵌套超过 8 层');
+      if (stack.length>=8) throw Error(this.t('ssh.includeDepth'));
       let real;try {real=await fs.realpath(file);}catch(e){if(e.code==='ENOENT')return [];throw e;}
-      if(stack.includes(real.toLowerCase()))throw Error('SSH Include 出现循环引用');
+      if(stack.includes(real.toLowerCase()))throw Error(this.t('ssh.includeCycle'));
       const stat=await fs.stat(real);budget.bytes+=stat.size;
-      if(++budget.files>128 || budget.bytes>1024*1024)throw Error('SSH 配置超过 128 个文件或 1 MiB');
+      if(++budget.files>128 || budget.bytes>1024*1024)throw Error(this.t('ssh.configLimit'));
       const ast=SSHConfig.parse(await fs.readFile(real,'utf8')), rows=[];
       const flatten=async nodes=>{
         for(const node of nodes) {
@@ -63,7 +64,7 @@ class ConfigStore {
         if(row.key==='match') {
           const criteria=row.criteria||{};
           const supported=Object.keys(criteria).every(k=>['all','host','originalhost','user','localuser'].includes(k));
-          if(!supported) {state.active=false;warnings.push('存在暂不支持的 Match 条件（不会执行 Match exec）');continue;}
+          if(!supported) {state.active=false;warnings.push(this.t('ssh.unsupportedMatch'));continue;}
           state.active=Object.entries(criteria).every(([k,v])=>k==='all'||matches(values(v).flatMap(x=>x.split(',')),k==='user'?(options.user||os.userInfo().username):k==='localuser'?os.userInfo().username:k==='host'?(options.hostname||alias):alias));
           continue;
         }
@@ -85,14 +86,14 @@ class ConfigStore {
       warnings:[...new Set(warnings)]};
   }
   plan(alias, chain=[]) {
-    if(chain.includes(alias) || chain.length>=8)throw Error('ProxyJump 循环或超过 8 层');
+    if(chain.includes(alias) || chain.length>=8)throw Error(this.t('ssh.jumpCycle'));
     const p=this.compute(alias);
-    if(p.proxyCommand && !p.proxyJump)throw Error('此主机使用 ProxyCommand；当前支持 ProxyJump，请在 SSH config 中改用 ProxyJump');
-    if(p.warnings.length)throw Error(p.warnings.join('；'));
+    if(p.proxyCommand && !p.proxyJump)throw Error(this.t('ssh.useProxyJump'));
+    if(p.warnings.length)throw Error(p.warnings.join(' '));
     const hops=[];
     if(p.proxyJump)for(const jump of p.proxyJump.split(',')) {
       const m=/^(?:([^@]+)@)?(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(jump.trim());
-      if(!m)throw Error('无效 ProxyJump');
+      if(!m)throw Error(this.t('ssh.invalidJump'));
       const parts=this.plan(m[2].replace(/^\[|\]$/g,''),[...chain,alias]);
       const last=parts.at(-1);if(m[1])last.username=m[1];if(m[3])last.port=Number(m[3]);hops.push(...parts);
     }

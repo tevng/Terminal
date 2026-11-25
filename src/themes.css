@@ -14,6 +14,7 @@ button:focus-visible,input:focus,select:focus,textarea:focus{outline-color:var(-
 #workspace .xterm-viewport::-webkit-scrollbar-track{background:var(--terminal-bg,#101318)}
 ::-webkit-scrollbar-thumb,.xterm-viewport::-webkit-scrollbar-thumb{background:var(--border)}
 #welcome{background:radial-gradient(ellipse at 80% 20%,color-mix(in srgb,var(--accent) 8%,transparent),transparent 60%)}
+#welcome .row button{padding:12px 20px;font-size:14px}
 #welcome p,.welcome-features{color:var(--muted)}
 dialog,#markdown-panel{background:var(--panel);border-color:var(--border);color:var(--text)}
 .dialog-heading button,label{color:var(--text)}
