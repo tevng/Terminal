@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { defaultLocale, translate } = require('../i18n/index.cjs');
 const samples = require('../i18n/samples.json');
+const { checkWorkspace } = require('./workspace.cjs');
 const pasteText = `PASTE_TEST_${samples.cjkSample}\nnext`;
 const root = path.resolve(__dirname,'..');
 async function run() {
@@ -17,9 +18,30 @@ async function run() {
   const localShells = process.platform === 'win32' ? [] : ['bash', 'zsh'].filter(shell => spawnSync(shell, ['--version']).status === 0);
   const key=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'});
   const channels=[], clients=[];let input='';let app;
+  const channelInput = new Map(), channelSize = new Map();
   const server=new Server({hostKeys:[key]},c=>{
     clients.push(c);c.on('error',()=>{});c.on('authentication',ctx=>ctx.method==='password' && ctx.password==='secret'?ctx.accept():ctx.reject(['password']));
-    c.on('ready',()=>c.on('session',accept=>{const s=accept();s.on('pty',accept=>accept());s.on('env',accept=>accept?.());s.on('window-change',accept=>accept?.());s.on('shell',accept=>{const ch=accept();channels.push(ch);ch.on('data',d=>{input+=d.toString();});ch.write(`# ${samples.hello} Silk 🥳\r\n\r\n**Connected** via SSH.\r\n\x1b[38;2;130;220;190mTruecolor ✓\x1b[0m\r\n`);});}));
+    c.on('ready', () => c.on('session', accept => {
+      const session = accept();
+      let ch, size;
+      session.on('pty', (accept, _reject, info) => { size = info; accept(); });
+      session.on('env', accept => accept?.());
+      session.on('window-change', (accept, _reject, info) => {
+        size = info;
+        if (ch) channelSize.set(ch, size);
+        accept?.();
+      });
+      session.on('shell', accept => {
+        ch = accept();
+        channels.push(ch); channelSize.set(ch, size); channelInput.set(ch, '');
+        ch.on('data', bytes => {
+          const text = bytes.toString();
+          input += text;
+          channelInput.set(ch, channelInput.get(ch) + text);
+        });
+        ch.write(`# ${samples.hello} Silk 🥳\r\n\r\n**Connected** via SSH.\r\n\x1b[38;2;130;220;190mTruecolor ✓\x1b[0m\r\n`);
+      });
+    }));
   });
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   await fs.writeFile(path.join(sshHome,'.ssh','config'),`Host fixture-config\n HostName 127.0.0.1\n User test\n Port ${server.address().port}\n IdentityAgent none\n IdentityFile none\n`);
@@ -338,7 +360,9 @@ $\includegraphics{https://example.com/no.png}$
     await fs.writeFile(path.join(results,`report-${report.renderer}.json`),JSON.stringify(report,null,2));
     assert.deepEqual(errors,[]);
     const stored=JSON.parse(await fs.readFile(path.join(userData,'settings.json'),'utf8'));assert.equal(JSON.stringify(stored).includes('secret'),false);
+    await checkWorkspace(page, channels, channelInput, channelSize, path.join(results, 'split-view.png'));
     await page.locator('#settings-open').click();await page.locator('#renderer').selectOption('dom');await page.locator('#settings-form button[type=submit]').click();
+    await page.locator('#settings-dialog').waitFor({state:'hidden'});
     await page.waitForFunction(()=>document.getElementById('resource-info').textContent.includes('DOM'));
     const savedAppearance=JSON.parse(await fs.readFile(path.join(userData,'settings.json'),'utf8')).appearance;
     assert.equal(savedAppearance.uiTheme,'plum');assert.equal(savedAppearance.terminalScheme,'ocean','saving font/performance settings preserves theme selection');
@@ -346,6 +370,7 @@ $\includegraphics{https://example.com/no.png}$
     channels[2].exit(0);channels[2].end();
     await page.waitForFunction(()=>document.querySelectorAll('.tab').length===4);
     assert.equal(await page.locator('.tab.active .tab-label').innerText(),activeLabel,'background shell exit does not steal the active tab');
+    assert.equal(await page.locator('#panes > .terminal-host:not([hidden])').count(), 2, 'background shell exit removes its split pane');
     await page.locator('.tab-label').last().click();channels[4].exit(0);channels[4].end();
     await page.waitForFunction(()=>document.querySelectorAll('.tab').length===3);
     assert.equal(await page.locator('.tab.active').count(),1,'active shell exit activates a surviving neighbor');

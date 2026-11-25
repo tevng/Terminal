@@ -25,6 +25,13 @@ Click **+ Local Terminal** in the header or **Open Local Terminal** on the home 
 - Linux and macOS use Bash or Zsh installed on your `PATH`.
 - Windows uses the default WSL distribution. Install WSL and the shell you intend to use in that distribution.
 
+## Tabs, groups, and split view
+
+- Drag tab labels left or right to reorder tabs. **Ctrl+Tab** follows the displayed order. A tab's **⋯** menu also has **Move Earlier** and **Move Later**.
+- Open **⋯** or right-click a tab to create a named group or add the tab to an existing group. Tab groups support SSH sessions and local shells. Choose **No Group** to remove one tab. Click a group name to rename or ungroup it, or drag its label to move the whole group.
+- Choose **Split View**, select two or more open tabs, then choose **Side by Side** or **Stacked**. Drag a divider to resize neighboring panes. With a divider focused, use the corresponding arrow keys to resize it.
+- Click a pane to direct input and toolbar actions to it. Selecting a tab outside the split replaces the focused pane. **Return to Single View** shows the focused tab. Split changes preserve open sessions and their scrollback.
+
 ## Themes and color schemes
 
 Open **Appearance** to choose a UI theme and terminal color scheme. The preview includes a multilingual font sample, emoji, and all 16 ANSI colors. Apply the selection with **Save Appearance**, or dismiss the preview with **Cancel**.
@@ -111,7 +118,7 @@ KaTeX and its fonts load on demand from the app bundle. The renderer disables tr
 - The default scrollback is 50,000 lines per session, configurable from 1,000 to 500,000. Older lines roll off when the buffer fills. Actual memory use depends on line width, color attributes, and the number of tabs. Terminal supports up to 24 concurrent sessions.
 - SSH and local PTYs pause output after sending each batch. They resume when xterm finishes parsing it and acknowledges the sequence number. UTF-8 decoding preserves split characters across chunks.
 - Each tab retains its own xterm instance and buffer. Hidden tabs stop visible drawing and continue parsing output, which can still use CPU under a heavy workload.
-- The default DOM renderer avoids WebGL context and texture overhead. With WebGL enabled, only the active tab holds a context. Switching tabs releases the previous context and rebuilds the glyph atlas when needed. If initialization fails or the context is lost, Terminal falls back to DOM.
+- The default DOM renderer avoids WebGL context and texture overhead. With WebGL enabled, only the focused tab holds a context. Other visible panes use DOM. Changing focus releases the previous context and rebuilds the glyph atlas when needed. If initialization fails or the context is lost, Terminal falls back to DOM.
 - By default, cursor blinking, smooth scrolling, and transparency are off. Terminal throttles resize events and avoids background resource polling.
 - Each input or paste is limited to 1 MiB. When the SSH input queue exceeds 2 MiB, Terminal drops the new input and shows a notification.
 - Electron has a baseline Chromium resource cost. The current release keeps scrollback in memory and bounds its size.

@@ -17,11 +17,12 @@
     <button id="settings-open"><span aria-hidden="true">⚙</span> <span data-i18n="settings.open"></span></button>
   </div>
 </header>
-<nav id="tabs" data-i18n-label="terminal.tabs"></nav>
+<nav id="tabs" role="tablist" data-i18n-label="terminal.tabs"></nav>
 <div class="toolbar">
   <span id="connection-state"></span>
   <div>
     <button id="reconnect" data-i18n="ssh.reconnect" hidden></button>
+    <button id="split-open" data-i18n="split.open" hidden></button>
     <button id="find-open" title="Ctrl+Shift+F" data-i18n="search.open"></button>
     <button id="markdown-open" title="Ctrl+Shift+M" data-i18n="reader.title"></button>
     <button id="copy-output" data-i18n="clipboard.copy"></button>
@@ -36,6 +37,7 @@
 </div>
 <main>
   <section id="workspace">
+    <div id="panes" hidden></div>
     <div id="welcome">
       <h1 data-i18n="home.heading"></h1>
       <div class="row">
@@ -69,6 +71,55 @@
     </div>
     <button type="submit" name="shell" value="bash">Bash</button>
     <button type="submit" name="shell" value="zsh">Zsh</button>
+  </form>
+</dialog>
+
+<dialog id="tab-dialog" aria-labelledby="tab-actions-title">
+  <div class="dialog-heading">
+    <h2 id="tab-actions-title" data-i18n="tabs.actions"></h2>
+    <button type="button" data-close="tab-dialog" data-i18n-label="common.close">✕</button>
+  </div>
+  <p id="tab-actions-name" class="tab-dialog-name"></p>
+  <label><span data-i18n="tabs.group"></span><select id="tab-group-select"></select></label>
+  <button id="tab-group-new" data-i18n="tabs.newGroup"></button>
+  <div class="dialog-actions">
+    <button id="tab-move-earlier" data-i18n="tabs.moveEarlier"></button>
+    <button id="tab-move-later" data-i18n="tabs.moveLater"></button>
+  </div>
+</dialog>
+
+<dialog id="group-dialog" aria-labelledby="group-title">
+  <form id="group-form">
+    <div class="dialog-heading">
+      <h2 id="group-title"></h2>
+      <button type="button" data-close="group-dialog" data-i18n-label="common.close">✕</button>
+    </div>
+    <label><span data-i18n="tabs.groupName"></span><input id="group-name" required maxlength="60"></label>
+    <div class="dialog-actions">
+      <button type="button" id="group-ungroup" data-i18n="tabs.ungroup"></button>
+      <button type="submit" class="primary" id="group-save" data-i18n="tabs.saveGroup"></button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="split-dialog" aria-labelledby="split-title">
+  <form id="split-form">
+    <div class="dialog-heading">
+      <h2 id="split-title" data-i18n="split.open"></h2>
+      <button type="button" data-close="split-dialog" data-i18n-label="common.close">✕</button>
+    </div>
+    <label>
+      <span data-i18n="split.layout"></span>
+      <select id="split-direction">
+        <option value="columns" data-i18n="split.columns"></option>
+        <option value="rows" data-i18n="split.rows"></option>
+      </select>
+    </label>
+    <fieldset id="split-tabs"><legend data-i18n="split.selectTabs"></legend></fieldset>
+    <div class="dialog-actions">
+      <button type="button" id="split-end" data-i18n="split.single"></button>
+      <button type="submit" class="primary" id="split-apply" data-i18n="split.apply"></button>
+    </div>
   </form>
 </dialog>
 

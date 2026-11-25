@@ -8,17 +8,24 @@ import { defaults, calibrateFonts, sanitizeOptions } from './fonts.js';
 import {wireClipboard} from './clipboard.js';
 import {resolveAppearance} from './themes.js';
 import {installAppearance} from './appearance.js';
+import { installTabs } from './tabs.js';
+import { installPanes } from './panes.js';
 import { defaultLocale, locales, normalizeLocale, translate } from '../i18n/index.cjs';
 import { cjkSample } from '../i18n/samples.json';
 import '@xterm/xterm/css/xterm.css';
 import './style.css';
 import './themes.css';
+import './workspace.css';
 const $ = id => document.getElementById(id), api = window.silk;
 let settings = { profiles: [], appearance: defaults, locale: defaultLocale };
 let options = defaults, active = null, counter = 0, configResult, configError;
 let locale = defaultLocale;
 const t = (key, values) => translate(locale, key, values);
 const sessions = new Map(), bySessionId = new Map();
+const tabStrip = installTabs($('tabs'), t);
+const paneLayout = installPanes($('panes'), t, requestFit);
+let split = null, resizeTimer;
+const splitDialog = $('split-dialog'), splitChoices = $('split-tabs');
 const localizedAttributes = [['title', 'title'], ['placeholder', 'placeholder'], ['label', 'aria-label']];
 function applyLocale(next) {
   const markdownSource = $('markdown-source');
@@ -148,10 +155,20 @@ function attachGPU(s) {
   try { addon = new WebglAddon(); s.term.loadAddon(addon); s.gpu = addon; addon.onContextLoss(() => { if (s.gpu !== addon) return; releaseGPU(s); s.gpuFailed = true; status(); }); }
   catch { addon?.dispose(); s.gpuFailed = true; }
 }
-function fit(s = current()) { if (!s || s.key !== active) return; try { s.fit.fit(); } catch {} status(); }
+function fitVisible() {
+  for (const s of sessions.values()) {
+    if (!s.element.hidden) { try { s.fit.fit(); } catch {} }
+  }
+}
+function requestFit() {
+  if (resizeTimer) return;
+  resizeTimer = setTimeout(() => { resizeTimer = null; fitVisible(); status(); }, 48);
+}
 function status() {
   const s = current();
   $('reconnect').hidden = !s || Boolean(s.profile.shell);
+  $('split-open').hidden = sessions.size < 2;
+  $('split-open').setAttribute('aria-pressed', String(Boolean(split)));
   if (!s) {
     $('connection-state').textContent = `○ ${t('terminal.ready')}`;
     $('session-info').textContent = t('home.localAndSsh');
@@ -168,43 +185,97 @@ function status() {
     renderer: s.gpu ? 'WebGL' : 'DOM', scrollback: options.scrollback.toLocaleString(locale), tabs: sessions.size
   });
 }
-function activate(key) {
-  if (active !== key) { const old = current(); releaseGPU(old); if (old) { old.element.hidden = true; old.tab.classList.remove('active'); } }
-  active = key; const s = current();
-  $('welcome').hidden = Boolean(s);
-  if (s) { s.element.hidden = false; s.tab.classList.add('active'); fit(s); attachGPU(s); s.term.refresh(0, s.term.rows - 1); s.term.focus(); }
+function renderWorkspace(focus) {
+  const s = current();
+  const visible = split?.keys || (s ? [active] : []);
+  const newlyVisible = [];
+  for (const session of sessions.values()) {
+    const shown = visible.includes(session.key), focused = session.key === active;
+    if (shown && session.element.hidden) newlyVisible.push(session);
+    session.element.hidden = !shown;
+    session.element.classList.toggle('active-pane', focused);
+    session.tab.classList.toggle('is-visible', shown);
+    session.tab.classList.toggle('active', focused);
+    session.label.setAttribute('aria-selected', String(focused));
+  }
+  $('welcome').hidden = Boolean(visible.length);
+  if (paneLayout.show(visible.map(key => sessions.get(key).element), split?.direction)) fitVisible();
+  attachGPU(s);
+  for (const session of newlyVisible) session.term.refresh(0, session.term.rows - 1);
+  if (s && focus) {
+    s.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    s.element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    s.term.focus();
+  }
   status();
+}
+function activate(key, focus = true) {
+  if (active !== key) releaseGPU(current());
+  if (split && key !== null && !split.keys.includes(key)) {
+    const index = Math.max(0, split.keys.indexOf(active));
+    split.keys[index] = key;
+  }
+  active = key;
+  renderWorkspace(focus);
 }
 function removeSession(s,{closeBackend=true}={}) {
   if(!sessions.has(s.key))return;
-  const keys=[...sessions.keys()],index=keys.indexOf(s.key),neighbor=keys[index-1]??keys[index+1]??null;
+  const keys = tabStrip.order(), index = keys.indexOf(s.key);
+  let neighbor = keys[index - 1] ?? keys[index + 1] ?? null;
+  const paneIndex = split?.keys.indexOf(s.key) ?? -1;
+  if (paneIndex >= 0) {
+    split.keys.splice(paneIndex, 1);
+    neighbor = split.keys[Math.min(paneIndex, split.keys.length - 1)] ?? neighbor;
+    if (split.keys.length < 2) split = null;
+  }
   s.state='closed';
   cancelSessionAuth(s);
   if (s.sessionId) { bySessionId.delete(s.sessionId);if(closeBackend)api.close(s.sessionId).catch(report); }
-  releaseGPU(s); s.term.dispose(); s.element.remove(); s.tab.remove(); sessions.delete(s.key);
-  if (active === s.key) { active = null; activate(neighbor); }else status();
+  releaseGPU(s); s.term.dispose(); s.element.remove(); tabStrip.remove(s.tab); sessions.delete(s.key);
+  if (active === s.key) activate(neighbor);
+  else renderWorkspace(false);
+  if (splitDialog.open) {
+    if (sessions.size < 2) splitDialog.close();
+    else renderSplitChoices(checkedSplitKeys());
+  }
   if(!sessions.size){$('find-bar').hidden=true;$('markdown-panel').hidden=true;}
 }
 function newSession(profile) {
-  const key = ++counter, element = document.createElement('div'); element.className = 'terminal-host'; element.hidden = true; $('workspace').append(element);
-  const tab = document.createElement('div'); tab.className = 'tab'; tab.setAttribute('role','tab');
+  const key = ++counter, element = document.createElement('div'); element.className = 'terminal-host'; element.hidden = true; $('panes').append(element);
+  const tab = document.createElement('div'); tab.className = 'tab';
   const label = document.createElement('button'); label.className = 'tab-label'; label.textContent = profile.name || `${profile.username}@${profile.host}`; label.onclick = () => activate(key);
+  label.setAttribute('role', 'tab');
+  label.id = `terminal-tab-${key}`;
+  element.id = `terminal-pane-${key}`;
+  element.setAttribute('role', 'tabpanel');
+  element.setAttribute('aria-labelledby', label.id);
+  label.setAttribute('aria-controls', element.id);
   const close = document.createElement('button'); close.className = 'tab-close'; close.textContent = '×';
   close.dataset.i18nTitle = close.dataset.i18nLabel = 'terminal.closeTab';
   close.title = t('terminal.closeTab'); close.setAttribute('aria-label', close.title);
-  tab.append(label,close); $('tabs').append(tab);
+  tab.append(label,close); tabStrip.add(tab, key);
   const term = new Terminal({ fontFamily, fontSize: options.fontSize, lineHeight: options.lineHeight, scrollback: options.scrollback,
     theme:{...theme}, cursorBlink: options.cursorBlink, cursorStyle: 'block', allowProposedApi: true,
     allowTransparency: false, rescaleOverlappingGlyphs: true, minimumContrastRatio: 1, altClickMovesCursor: false, scrollOnUserInput: true, smoothScrollDuration: 0,
     linkHandler: { activate: () => {} } });
   const fitter = new FitAddon(), search = new SearchAddon(); term.loadAddon(fitter); term.loadAddon(search); term.loadAddon(new Unicode11Addon()); term.loadAddon(new UnicodeGraphemesAddon()); term.unicode.activeVersion = options.unicode === '11' ? '11' : '15-graphemes';
-  const s = { key, profile: { name: profile.name, host: profile.host, port: profile.port, username: profile.username, auth: profile.auth, shell: profile.shell }, term, fit: fitter, search, element, tab, state: 'connecting', sessionId: null, gpu: null };
+  const s = { key, profile: { name: profile.name, host: profile.host, port: profile.port, username: profile.username, auth: profile.auth, shell: profile.shell }, term, fit: fitter, search, element, tab, label, state: 'connecting', sessionId: null, gpu: null };
   sessions.set(key,s); close.onclick = () => {
     const message = t(s.profile.shell ? 'local.closeConfirm' : 'ssh.closeConfirm');
     if (s.state !== 'closed' && !confirm(message)) return;
     removeSession(s);
   };
+  $('panes').hidden = false;
   element.hidden = false; term.open(element); activate(key);
+  function focusPane() { if (active !== key && !element.hidden) activate(key, false); }
+  element.addEventListener('pointerdown', event => {
+    focusPane();
+    if (event.button === 0 && !event.target.closest('.xterm')) {
+      event.preventDefault();
+      term.focus();
+    }
+  }, true);
+  element.addEventListener('focusin', focusPane);
   s.clipboard=wireClipboard({element,term,api,t,ready:()=>s.state==='ready',notify:toast,error:report});
   term.onData(data => { if (s.state === 'ready') api.input(s.sessionId, data); });
   term.onBinary(data => { if (s.state === 'ready') api.input(s.sessionId, data, true); });
@@ -319,6 +390,48 @@ $('local-form').onsubmit = event => {
   void startSession({ shell, name: event.submitter.textContent });
 };
 $('reconnect').onclick = () => { const s = current(); if (s && !s.profile.shell) openConnect(s.profile); };
+function checkedSplitKeys() {
+  return [...splitChoices.querySelectorAll('input:checked')].map(input => Number(input.value));
+}
+function updateSplitApply() { $('split-apply').disabled = checkedSplitKeys().length < 2; }
+function renderSplitChoices(selected) {
+  $('split-end').hidden = !split;
+  for (const label of splitChoices.querySelectorAll('label')) label.remove();
+  for (const key of tabStrip.order()) {
+    const session = sessions.get(key);
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox'; checkbox.value = String(key); checkbox.checked = selected.includes(key);
+    const label = document.createElement('label');
+    label.className = 'checkbox';
+    label.append(checkbox, session.label.textContent);
+    splitChoices.append(label);
+  }
+  updateSplitApply();
+}
+$('split-open').onclick = () => {
+  const order = tabStrip.order(), activeIndex = order.indexOf(active);
+  $('split-direction').value = split?.direction || 'columns';
+  renderSplitChoices(split?.keys || [active, order[activeIndex + 1] ?? order[activeIndex - 1]]);
+  splitDialog.showModal();
+};
+splitChoices.onchange = updateSplitApply;
+$('split-form').onsubmit = event => {
+  event.preventDefault();
+  const selected = checkedSplitKeys().filter(key => sessions.has(key));
+  if (selected.length < 2) return;
+  const retained = (split?.keys || []).filter(key => selected.includes(key));
+  split = {
+    keys: [...retained, ...selected.filter(key => !retained.includes(key))],
+    direction: $('split-direction').value === 'rows' ? 'rows' : 'columns'
+  };
+  splitDialog.close();
+  activate(selected.includes(active) ? active : split.keys[0]);
+};
+$('split-end').onclick = () => {
+  split = null;
+  splitDialog.close();
+  activate(active);
+};
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => {const dialog=$(button.dataset.close);if(dialog.id==='connect-dialog'){closeCredentialDialog(dialog);requestInputRecovery();}else dialog.close();});
 $('connect-dialog').addEventListener('cancel',event=>{event.preventDefault();closeCredentialDialog($('connect-dialog'));requestInputRecovery();});
 function settingsFields(o) { for (const [id,key] of [['font-latin','latin'],['font-cjk','cjk'],['font-math','math'],['font-emoji','emoji'],['font-fallback','fallback'],['font-size','fontSize'],['line-height','lineHeight'],['scrollback','scrollback'],['renderer','renderer'],['unicode','unicode']]) $(id).value = o[key]; $('cursor-blink').checked = o.cursorBlink; }
@@ -337,11 +450,10 @@ $('settings-form').onsubmit = async e => {
     // Load local font aliases before measuring xterm's cell width.
     await document.fonts.load(`${options.fontSize}px ${fontFamily}`, `A${cjkSample}🥳`).catch(() => {}); await document.fonts.ready;
     for (const s of sessions.values()) { releaseGPU(s); s.gpuFailed = false; Object.assign(s.term.options, {fontFamily,fontSize:options.fontSize,lineHeight:options.lineHeight,scrollback:options.scrollback,cursorBlink:options.cursorBlink}); s.term.unicode.activeVersion = options.unicode === '11' ? '11' : '15-graphemes'; }
-    $('settings-dialog').close(); fit(); attachGPU(current()); status();
+    $('settings-dialog').close(); fitVisible(); attachGPU(current()); status();
   } catch(e) { $('settings-error').textContent = e.message; }
 };
-let resizing;
-new ResizeObserver(() => { clearTimeout(resizing); resizing = setTimeout(() => fit(), 60); }).observe($('workspace'));
+new ResizeObserver(requestFit).observe($('workspace'));
 function search(back = false) {
   const s = current(); if (!s) return;
   const query = $('find-input').value, result = $('find-result');
@@ -385,7 +497,7 @@ let mdTimer; $('markdown-source').oninput = () => { clearTimeout(mdTimer); mdTim
 document.addEventListener('keydown', async e => {
   if(e.isComposing || e.keyCode===229)return;
   if (document.querySelector('dialog[open]')) return;
-  if (e.ctrlKey && e.key === 'Tab') { e.preventDefault(); const keys = [...sessions.keys()]; if (keys.length) activate(keys[(keys.indexOf(active) + (e.shiftKey ? keys.length - 1 : 1)) % keys.length]); return; }
+  if (e.ctrlKey && e.key === 'Tab') { e.preventDefault(); const keys = tabStrip.order(); if (keys.length) activate(keys[(keys.indexOf(active) + (e.shiftKey ? keys.length - 1 : 1)) % keys.length]); return; }
   if (!e.ctrlKey || !e.shiftKey) return;
   const k = e.key.toUpperCase();
   const commands = { T:'new-tab', W:null, F:'find-open', M:'markdown-open', C:'copy-output' };
