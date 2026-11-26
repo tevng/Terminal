@@ -9,7 +9,7 @@
 </head>
 <body>
 <header>
-  <div class="brand"><img class="brand-icon" src="terminal.png" alt=""> Terminal</div>
+  <div class="brand"><img class="brand-icon" src="terminal.png" alt=""> Terminal <span id="app-version" class="brand-sub"></span></div>
   <div class="header-actions">
     <button id="new-tab" data-i18n-title="ssh.shortcut">+ SSH</button>
     <button id="new-local" data-i18n="local.new"></button>
@@ -61,18 +61,7 @@
     <article id="markdown-content"></article>
   </aside>
 </main>
-<footer><span id="session-info"></span><span id="resource-info">Terminal 0.3</span></footer>
-
-<dialog id="local-dialog" aria-labelledby="local-title">
-  <form id="local-form">
-    <div class="dialog-heading">
-      <h2 id="local-title" data-i18n="local.open"></h2>
-      <button type="button" data-close="local-dialog" data-i18n-label="common.close">✕</button>
-    </div>
-    <button type="submit" name="shell" value="bash">Bash</button>
-    <button type="submit" name="shell" value="zsh">Zsh</button>
-  </form>
-</dialog>
+<footer><span id="session-info"></span><span id="resource-info"></span></footer>
 
 <dialog id="tab-dialog" aria-labelledby="tab-actions-title">
   <div class="dialog-heading">
@@ -169,6 +158,14 @@
       <button type="button" data-close="settings-dialog" data-i18n-label="common.close">✕</button>
     </div>
     <label><span data-i18n="language.label"></span><select id="language"></select></label>
+    <label>
+      <span data-i18n="local.preference"></span>
+      <select id="local-shell">
+        <option value="auto" data-i18n="local.systemDefault"></option>
+        <option value="bash">Bash</option>
+        <option value="zsh">Zsh</option>
+      </select>
+    </label>
     <p class="muted" data-i18n="settings.fontHint"></p>
     <label><span data-i18n="settings.latinFont"></span><input id="font-latin"></label>
     <label><span data-i18n="settings.cjkFont"></span><input id="font-cjk"></label>

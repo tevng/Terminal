@@ -5,6 +5,16 @@ const { dimensions } = require('./ssh.cjs');
 const { english } = require('../i18n/index.cjs');
 
 const windows = process.platform === 'win32';
+const localShells = ['auto', 'bash', 'zsh'];
+
+function normalizeLocalShell(preference) {
+  return localShells.includes(preference) ? preference : 'auto';
+}
+
+function defaultLocalShell(platform = process.platform) {
+  if (platform === 'win32') return 'cmd';
+  return platform === 'darwin' ? 'zsh' : 'bash';
+}
 
 function executable(file) {
   try {
@@ -15,20 +25,23 @@ function executable(file) {
   }
 }
 
-function shellCommand(shell, t) {
-  if (shell !== 'bash' && shell !== 'zsh') throw Error(t('local.invalidShell'));
+function shellCommand(preference, { platform = process.platform, env = process.env, isExecutable = executable, t = english } = {}) {
+  if (!localShells.includes(preference)) throw Error(t('local.invalidShell'));
+  const shell = preference === 'auto' ? defaultLocalShell(platform) : preference;
 
-  if (windows) {
-    const file = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'wsl.exe');
-    if (!executable(file)) throw Error(t('local.missingWsl'));
-    return { file, args: ['--cd', '~', '--exec', shell, '-i'] };
+  if (platform === 'win32') {
+    const system32 = path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32');
+    const isCmd = shell === 'cmd';
+    const file = path.win32.join(system32, isCmd ? 'cmd.exe' : 'wsl.exe');
+    if (!isExecutable(file)) throw Error(t(isCmd ? 'local.missingCmd' : 'local.missingWsl'));
+    return { shell, file, args: isCmd ? [] : ['--cd', '~', '--exec', shell, '-i'] };
   }
 
-  const directories = (process.env.PATH || '/usr/bin:/bin').split(path.delimiter);
-  const file = directories.filter(directory => path.isAbsolute(directory))
-    .map(directory => path.join(directory, shell)).find(executable);
+  const directories = (env.PATH || '/usr/bin:/bin').split(path.posix.delimiter);
+  const file = directories.filter(directory => path.posix.isAbsolute(directory))
+    .map(directory => path.posix.join(directory, shell)).find(isExecutable);
   if (!file) throw Error(t('local.missingShell', { shell }));
-  return { file, args: ['-i'] };
+  return { shell, file, args: ['-i'] };
 }
 
 class LocalSessions {
@@ -38,12 +51,12 @@ class LocalSessions {
     this.t = t;
   }
 
-  start(id, shell, size) {
+  start(id, preference, size) {
     if (typeof id !== 'string' || !/^local:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id) || this.items.has(id)) {
       throw Error(this.t('local.invalidId'));
     }
     const { cols, rows } = dimensions(size?.cols, size?.rows, this.t);
-    const { file, args } = shellCommand(shell, this.t);
+    const { shell, file, args } = shellCommand(preference, { t: this.t });
     const name = 'xterm-256color';
     const env = { ...process.env, TERM: name, COLORTERM: 'truecolor', TERM_PROGRAM: 'SilkTerminal' };
     if (!windows) env.SHELL = file;
@@ -61,7 +74,7 @@ class LocalSessions {
       session.exited = true;
       if (this.items.get(id) !== session) return;
       if (Number.isInteger(exitCode) && exitCode !== 0) {
-        const key = windows ? 'local.exitWsl' : 'local.exit';
+        const key = windows && shell !== 'cmd' ? 'local.exitWsl' : 'local.exit';
         this.send({ id, type: 'notice', message: this.t(key, { shell, code: exitCode }) });
       }
       if (!session.pending) this.close(id);
@@ -111,4 +124,4 @@ class LocalSessions {
   }
 }
 
-module.exports = { LocalSessions };
+module.exports = { LocalSessions, defaultLocalShell, normalizeLocalShell, shellCommand };

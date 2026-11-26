@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { setTimeout: delay } = require('node:timers/promises');
 const test = require('node:test');
-const { LocalSessions } = require('../electron/local.cjs');
+const { LocalSessions, defaultLocalShell, normalizeLocalShell, shellCommand } = require('../electron/local.cjs');
 const { cjkSample } = require('../i18n/samples.json');
 
 const sessionId = () => `local:${randomUUID()}`;
@@ -30,9 +30,28 @@ async function waitFor(predicate, description) {
 
 test('local sessions reject arbitrary programs and malformed sizes', () => {
   const manager = new LocalSessions({ send() {} });
-  assert.throws(() => manager.start(sessionId(), '/bin/sh', size), /Choose Bash or Zsh/);
+  assert.throws(() => manager.start(sessionId(), '/bin/sh', size), /Choose the system default, Bash, or Zsh/);
   assert.throws(() => manager.start(sessionId(), 'bash', { cols: 0, rows: 24 }), /Invalid terminal dimensions/);
   assert.throws(() => manager.start('unknown', 'bash', size), /Invalid local session ID/);
+});
+
+test('local shell defaults use native CMD on Windows, Bash on Linux, and Zsh on macOS', () => {
+  const cmd = 'D:\\Windows\\System32\\cmd.exe';
+  const win = { platform: 'win32', env: { SystemRoot: 'D:\\Windows' } };
+  assert.deepEqual(shellCommand('auto', { ...win, isExecutable: file => file === cmd }), {
+    shell: 'cmd', file: cmd, args: []
+  });
+  assert.throws(() => shellCommand('auto', { ...win, isExecutable: file => file.endsWith('wsl.exe') }), /cmd\.exe/);
+  assert.deepEqual(shellCommand('zsh', { ...win, isExecutable: file => file.endsWith('wsl.exe') }), {
+    shell: 'zsh', file: 'D:\\Windows\\System32\\wsl.exe', args: ['--cd', '~', '--exec', 'zsh', '-i']
+  });
+  for (const [platform, shell] of [['linux', 'bash'], ['darwin', 'zsh']]) {
+    assert.deepEqual(shellCommand('auto', { platform, env: { PATH: '/bin' }, isExecutable: () => true }), {
+      shell, file: '/bin/' + shell, args: ['-i']
+    });
+  }
+  assert.equal(normalizeLocalShell(undefined), 'auto');
+  assert.equal(normalizeLocalShell('zsh'), 'zsh');
 });
 
 for (const shell of ['bash', 'zsh']) {
@@ -60,7 +79,8 @@ for (const shell of ['bash', 'zsh']) {
     });
     const initFile = shell === 'bash' ? '.bashrc' : '.zshrc';
     await fs.writeFile(path.join(home, initFile), `PS1=''; printf 'INIT_%s\n' ${shell}\n`);
-    manager.start(id, shell, size);
+    const preference = shell === defaultLocalShell() ? 'auto' : shell;
+    manager.start(id, preference, size);
     assert.equal(events[0].type, 'ready');
     assert.throws(() => manager.start(id, shell, size), /Invalid local session ID/);
     await waitFor(() => events.some(event => event.type === 'data'), 'shell produced no initial output');
@@ -87,7 +107,7 @@ for (const shell of ['bash', 'zsh']) {
     assert.equal(manager.items.size, 0);
     assert.equal(events.filter(event => event.type === 'closed').length, 1);
 
-    manager.start(id, shell, size);
+    manager.start(id, preference, size);
     const pty = manager.items.get(id).pty;
     const exited = new Promise(resolve => pty.onExit(resolve));
     manager.close(id);

@@ -17,7 +17,15 @@ import './style.css';
 import './themes.css';
 import './workspace.css';
 const $ = id => document.getElementById(id), api = window.silk;
-let settings = { profiles: [], appearance: defaults, locale: defaultLocale };
+const appInfo = await api.appInfo();
+const localShellNames = { bash: 'Bash', zsh: 'Zsh', cmd: 'CMD' };
+$('app-version').textContent = `v${appInfo.version}`;
+if (appInfo.defaultShell === 'cmd') {
+  for (const option of $('local-shell').options) {
+    if (option.value !== 'auto') option.textContent += ' (WSL)';
+  }
+}
+let settings = { profiles: [], appearance: defaults, locale: defaultLocale, localShell: 'auto' };
 let options = defaults, active = null, counter = 0, configResult, configError;
 let locale = defaultLocale;
 const t = (key, values) => translate(locale, key, values);
@@ -172,7 +180,7 @@ function status() {
   if (!s) {
     $('connection-state').textContent = `○ ${t('terminal.ready')}`;
     $('session-info').textContent = t('home.localAndSsh');
-    $('resource-info').textContent = 'Terminal 0.3';
+    $('resource-info').textContent = '';
     return;
   }
   const symbol = s.state === 'ready' ? '●' : s.state === 'connecting' ? '◌' : '○';
@@ -380,15 +388,12 @@ $('connect-form').onsubmit = async e => {
 };
 $('delete-profile').onclick = async () => { const value = $('saved-profile').value; if (!value || value.startsWith('config:')) return; settings.profiles.splice(Number(value),1); try { await persist(); profilesList(); } catch(e) { report(e); } };
 for (const id of ['new-tab','welcome-connect']) $(id).onclick = () => openConnect();
-const localDialog = $('local-dialog');
-for (const id of ['new-local', 'welcome-local']) $(id).onclick = () => localDialog.showModal();
-localDialog.addEventListener('close', () => current()?.term.focus());
-$('local-form').onsubmit = event => {
-  event.preventDefault();
-  const shell = event.submitter.value;
-  localDialog.close();
-  void startSession({ shell, name: event.submitter.textContent });
-};
+function openLocal() {
+  const preference = settings.localShell;
+  const shell = preference === 'auto' ? appInfo.defaultShell : preference;
+  void startSession({ shell: preference, name: localShellNames[shell] });
+}
+for (const id of ['new-local', 'welcome-local']) $(id).onclick = openLocal;
 $('reconnect').onclick = () => { const s = current(); if (s && !s.profile.shell) openConnect(s.profile); };
 function checkedSplitKeys() {
   return [...splitChoices.querySelectorAll('input:checked')].map(input => Number(input.value));
@@ -436,13 +441,19 @@ document.querySelectorAll('[data-close]').forEach(button => button.onclick = () 
 $('connect-dialog').addEventListener('cancel',event=>{event.preventDefault();closeCredentialDialog($('connect-dialog'));requestInputRecovery();});
 function settingsFields(o) { for (const [id,key] of [['font-latin','latin'],['font-cjk','cjk'],['font-math','math'],['font-emoji','emoji'],['font-fallback','fallback'],['font-size','fontSize'],['line-height','lineHeight'],['scrollback','scrollback'],['renderer','renderer'],['unicode','unicode']]) $(id).value = o[key]; $('cursor-blink').checked = o.cursorBlink; }
 function readFields() { return sanitizeOptions({ ...options,fontPresetVersion:2,latin:$('font-latin').value,cjk:$('font-cjk').value,math:$('font-math').value,emoji:$('font-emoji').value,fallback:$('font-fallback').value,fontSize:$('font-size').value,lineHeight:$('line-height').value,scrollback:$('scrollback').value,renderer:$('renderer').value,unicode:$('unicode').value,cursorBlink:$('cursor-blink').checked }); }
-$('settings-open').onclick = () => { settingsFields(options); $('language').value = locale; $('settings-error').textContent = ''; $('settings-dialog').showModal(); };
-$('settings-reset').onclick = () => { settingsFields(defaults); };
+$('settings-open').onclick = () => {
+  settingsFields(options);
+  $('language').value = locale;
+  $('local-shell').value = settings.localShell;
+  $('settings-error').textContent = '';
+  $('settings-dialog').showModal();
+};
+$('settings-reset').onclick = () => { settingsFields(defaults); $('local-shell').value = 'auto'; };
 $('settings-form').onsubmit = async e => {
   e.preventDefault(); const next = readFields();
   try {
     const nextLocale = normalizeLocale($('language').value);
-    const updated = { ...settings, appearance: next, locale: nextLocale };
+    const updated = { ...settings, appearance: next, locale: nextLocale, localShell: $('local-shell').value };
     await api.saveSettings(updated);
     settings = updated; options = next;
     if (locale !== nextLocale) applyLocale(nextLocale);

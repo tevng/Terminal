@@ -3,6 +3,7 @@ html,body{background:var(--bg,#101318);color:var(--text,#d4dce6)}
 :root{--panel:#151a21;--raised:#1c232d;--input:#11161d;--text:#d4dce6;--border:#34404f;--on-accent:#11271e;--link:#8cbced;--error:#ffa0aa}
 header,#tabs,footer{background:var(--panel);border-color:var(--border)}
 .brand-sub,.shortcut-hint,.muted,#find-result,footer,.tab-close{color:var(--muted)}
+#app-version{margin:0;letter-spacing:.02em;font-size:11px;font-variant-numeric:tabular-nums}
 button{background:var(--raised);border-color:var(--border);color:var(--text)}
 button:hover{background:color-mix(in srgb,var(--raised) 85%,var(--text));border-color:var(--muted)}
 button:focus-visible,input:focus,select:focus,textarea:focus{outline-color:var(--accent)}

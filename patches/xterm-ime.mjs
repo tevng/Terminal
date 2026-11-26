@@ -36,6 +36,13 @@ export function xtermImePlugin(){
     build.onLoad({filter:/[\\/]CoreBrowserTerminal\.ts$/},async args=>{
       let source=(await readFile(args.path,'utf8')).replace(/\r\n/g,'\n');
       source=replaceOnce(source,"'compositionend', () => this._compositionHelper!.compositionend()","'compositionend', (event: CompositionEvent) => this._compositionHelper!.compositionend(event)");
+      source=replaceOnce(source,'    if (result.cancel) {',`    // Linux input methods can commit converted text after a regular printable keydown.
+    // Let the native keypress or input event deliver it before canceling the key.
+    if (Browser.isLinux && event.key.length === 1 && result.key === event.key && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      return true;
+    }
+
+    if (result.cancel) {`);
       source=replaceOnce(source,'protected _inputEvent(ev: InputEvent): boolean {','protected _inputEvent(ev: InputEvent): boolean {\n    if (ev.inputType === "insertText" || ev.inputType === "insertCompositionText") {\n      this._compositionHelper!.noteInputEvent();\n    }\n    if (ev.inputType === "insertText" && !ev.isComposing && ev.data !== this._compositionHelper!.pendingCommittedData) {\n      this._compositionHelper!.flushPendingCommit();\n    }');
       source=replaceOnce(source,"if (ev.data && ev.inputType === 'insertText' && (!ev.composed || !this._keyDownSeen) && !this.optionsService.rawOptions.screenReaderMode) {","if (ev.data && ev.inputType === 'insertText' && !ev.isComposing && !this._compositionHelper!.isComposing && !this._compositionHelper!.isSendingComposition && !this.optionsService.rawOptions.screenReaderMode) {");
       source=replaceOnce(source,'protected _keyPress(ev: KeyboardEvent): boolean {\n    let key;','protected _keyPress(ev: KeyboardEvent): boolean {\n    if (this._compositionHelper!.isComposing || this._compositionHelper!.isSendingComposition) return false;\n    let key;');

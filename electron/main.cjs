@@ -3,7 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { Sessions, validateProfile } = require('./ssh.cjs');
-const { LocalSessions } = require('./local.cjs');
+const { LocalSessions, defaultLocalShell, normalizeLocalShell } = require('./local.cjs');
 const { ConfigStore } = require('./config.cjs');
 const { defaultLocale, normalizeLocale, translate } = require('../i18n/index.cjs');
 const {existsSync}=require('node:fs');
@@ -67,6 +67,7 @@ app.whenReady().then(() => {
   win.setMenuBarVisibility(false);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
+  handle('app:info', () => ({ version: app.getVersion(), defaultShell: defaultLocalShell() }));
   local = new LocalSessions({ send: sendTerminal, t });
   ssh = new Sessions({ send: payload => {
     if(payload.type==='closed')for(const [requestId,request]of authRequests)if(request.id===payload.id){clearTimeout(request.timer);authRequests.delete(requestId);request.reject(Error(t('auth.sessionClosed')));}
@@ -124,7 +125,7 @@ app.whenReady().then(() => {
   handle('settings:load', async () => {
     const data = await readJSON(storePath(), { profiles: [], appearance: {} });
     locale = normalizeLocale(data.locale);
-    return { ...data, locale };
+    return { ...data, locale, localShell: normalizeLocalShell(data.localShell) };
   });
   let saving = Promise.resolve();
   handle('settings:save', data => {
@@ -133,8 +134,9 @@ app.whenReady().then(() => {
     const appearance = data.appearance || {};
     if (JSON.stringify(appearance).length > 20000) throw Error(t('settings.tooLarge'));
     const nextLocale = normalizeLocale(data.locale);
+    const localShell = normalizeLocalShell(data.localShell);
     saving = saving.catch(() => {}).then(async () => {
-      await writeJSON(storePath(), { profiles, appearance, locale: nextLocale });
+      await writeJSON(storePath(), { profiles, appearance, locale: nextLocale, localShell });
       locale = nextLocale;
     });
     return saving;

@@ -15,7 +15,10 @@ async function run() {
   const results=path.join(root,'test-results');await fs.mkdir(results,{recursive:true});
   const userData=await fs.mkdtemp(path.join(results,'profile-'));
   const sshHome=await fs.mkdtemp(path.join(results,'ssh-home-'));await fs.mkdir(path.join(sshHome,'.ssh'));
-  const localShells = process.platform === 'win32' ? [] : ['bash', 'zsh'].filter(shell => spawnSync(shell, ['--version']).status === 0);
+  const defaultShell = process.platform === 'win32' ? 'cmd' : process.platform === 'darwin' ? 'zsh' : 'bash';
+  const alternative = defaultShell === 'zsh' ? 'bash' : 'zsh';
+  const localShells = [defaultShell];
+  if (defaultShell !== 'cmd' && spawnSync(alternative, ['--version']).status === 0) localShells.push(alternative);
   const key=generateKeyPairSync('rsa',{modulusLength:2048}).privateKey.export({type:'pkcs1',format:'pem'});
   const channels=[], clients=[];let input='';let app;
   const channelInput = new Map(), channelSize = new Map();
@@ -48,11 +51,12 @@ async function run() {
   const errors=[];
   try {
     const launchEnv={...process.env,SILK_USER_DATA:userData,SILK_SSH_HOME:sshHome};delete launchEnv.ELECTRON_RUN_AS_NODE;
-    if (localShells.length) {
+    if (process.platform !== 'win32') {
       const shellHome = await fs.mkdtemp(path.join(results, 'shell-home-'));
       if (process.platform === 'linux') launchEnv.XAUTHORITY ||= path.join(os.homedir(), '.Xauthority');
       launchEnv.HOME = launchEnv.ZDOTDIR = shellHome;
     }
+    launchEnv.TERMINAL_UI_SHELL_MARKER = 'CMD';
     app=await electron.launch({executablePath:process.env.SILK_TEST_EXE || undefined,args:process.env.SILK_TEST_EXE ? [] : [root],env:launchEnv,timeout:120000});
     // Only this test process auto-accepts the fixture server's host key.
     await app.evaluate(async({dialog,clipboard,ClipboardItem})=>{dialog.showMessageBox=async(_win,options)=>{globalThis.__hostVerificationTitle=options.title;return {response:1};};globalThis.__terminalClipboardBackup=await Promise.all((await clipboard.read()).filter(item=>item.types.length).map(async item=>new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type=>[type,await item.getType(type)]))))));});
@@ -60,9 +64,11 @@ async function run() {
     await page.locator('#welcome h1').waitFor();
     await page.waitForFunction(() => document.querySelector('#welcome h1').textContent === 'New Session');
     assert.equal(await page.locator('html').getAttribute('lang'), 'en');
+    assert.equal(await page.locator('#app-version').innerText(), 'v' + await app.evaluate(({ app }) => app.getVersion()));
     await page.screenshot({path:path.join(results,'welcome.png')});
     await page.locator('#settings-open').click();
     assert.equal(await page.locator('#language').inputValue(), 'en');
+    assert.equal(await page.locator('#local-shell').inputValue(), 'auto');
     assert.match(await page.locator('#font-latin').inputValue(),/^Comic Mono/);
     assert.match(await page.locator('#font-cjk').inputValue(),/^NSimSun/);
     await page.locator('#font-latin').fill('Comic Mono, Consolas');
@@ -128,15 +134,28 @@ $\includegraphics{https://example.com/no.png}$
     });
     assert.ok(nativeError?.includes(translate('zh-CN', 'local.invalidId')), 'IPC errors use the selected language');
     await setLanguage(defaultLocale);
+    const shellNames = { bash: 'Bash', zsh: 'Zsh', cmd: 'CMD' };
+    const setLocalShell = async preference => {
+      await page.locator('#settings-open').click();
+      await page.locator('#local-shell').selectOption(preference);
+      await page.locator('#settings-form button[type=submit]').click();
+      await page.locator('#settings-dialog').waitFor({ state: 'hidden' });
+      const stored = JSON.parse(await fs.readFile(path.join(userData, 'settings.json'), 'utf8'));
+      assert.equal(stored.localShell, preference);
+    };
     for (const shell of localShells) {
-      const name = shell === 'bash' ? 'Bash' : 'Zsh';
+      if (shell !== defaultShell) await setLocalShell(shell);
+      const name = shellNames[shell];
       const sshInput = input;
       await page.locator('#new-local').click();
-      await page.locator(`#local-form button[value="${shell}"]`).click();
       await page.waitForFunction(name => document.getElementById('connection-state').textContent === `● Local ${name}`, name);
+      assert.equal(await page.locator('dialog[open]').count(), 0, 'opening the local shell is a single action');
       assert.equal(await page.locator('.tab').count(), 2);
       assert.equal(await page.locator('#reconnect').isVisible(), false);
-      await page.keyboard.type(`printf 'LOCAL_%s\\n' ${name}`);
+      const command = shell === 'cmd'
+        ? 'echo LOCAL_%TERMINAL_UI_SHELL_MARKER%'
+        : 'if [ -n "$BASH_VERSION" ]; then printf "LOCAL_%s\\n" Bash; else printf "LOCAL_%s\\n" Zsh; fi';
+      await page.keyboard.type(command);
       await page.keyboard.press('Enter');
       await page.locator('#markdown-open').click();
       let sawOutput = false;
@@ -149,12 +168,13 @@ $\includegraphics{https://example.com/no.png}$
       assert.equal(input, sshInput, 'local input stays in the local PTY');
       await page.locator('#markdown-close').click();
       await page.locator('.terminal-host:not([hidden]) .xterm-helper-textarea').focus();
-      await page.keyboard.type('exit 0');
+      await page.keyboard.type('exit');
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => document.querySelectorAll('.tab').length === 1);
       assert.match(await page.locator('#connection-state').innerText(), /Connected/);
       assert.equal(channels.length, 1, 'local tabs leave the SSH connection intact');
     }
+    if (localShells.length > 1) await setLocalShell('auto');
     await page.locator('.terminal-host:not([hidden]) .xterm-helper-textarea').focus();
     await page.keyboard.type('echo hello');await page.keyboard.press('Enter');await page.waitForTimeout(100);assert.match(input,/echo hello\r/);
     const ime=await page.context().newCDPSession(page);
@@ -247,6 +267,40 @@ $\includegraphics{https://example.com/no.png}$
         t.dispatchEvent(new KeyboardEvent('keyup',{key:'Process',keyCode:229,bubbles:true}));
       },{char:followup,comma:samples.fullWidthComma});
       await page.waitForTimeout(50);assert.equal(input.slice(before),samples.fullWidthComma+followup,'a second real punctuation key immediately after commit is preserved in order');
+    }
+    if (process.platform === 'linux') {
+      const punctuation = [
+        { key: ',', code: 'Comma', keyCode: 188, text: samples.fullWidthComma },
+        { key: '.', code: 'Period', keyCode: 190, text: samples.fullWidthPeriod },
+        { key: '!', code: 'Digit1', keyCode: 49, shiftKey: true, text: samples.fullWidthPunctuation[2] },
+        { key: '?', code: 'Slash', keyCode: 191, shiftKey: true, text: samples.fullWidthPunctuation[3] }
+      ];
+      for (const withKeypress of [true, false]) {
+        const before = input.length;
+        await page.evaluate(({ punctuation, withKeypress }) => {
+          const textarea = document.activeElement;
+          for (const { text, ...event } of punctuation) {
+            const down = new KeyboardEvent('keydown', { ...event, bubbles: true, cancelable: true });
+            // Chromium can expose the physical key on keydown and the IBus commit on the text path.
+            if (textarea.dispatchEvent(down)) {
+              const charCode = text.charCodeAt(0);
+              const press = new KeyboardEvent('keypress', { ...event, key: text, charCode, which: charCode, bubbles: true, cancelable: true });
+              if (!withKeypress || textarea.dispatchEvent(press)) {
+                textarea.value += text;
+                textarea.dispatchEvent(new InputEvent('input', { data: text, inputType: 'insertText', bubbles: true, composed: true }));
+              }
+            }
+            textarea.dispatchEvent(new KeyboardEvent('keyup', { ...event, bubbles: true }));
+          }
+        }, { punctuation, withKeypress });
+        const expected = punctuation.map(key => key.text).join('');
+        for (let i = 0; i < 100 && input.length - before < expected.length; i++) await page.waitForTimeout(20);
+        assert.equal(input.slice(before), expected, 'Linux Pinyin sends the committed punctuation exactly once');
+      }
+      const before = input.length;
+      await page.keyboard.type(',.!?');
+      for (let i = 0; i < 100 && input.length - before < 4; i++) await page.waitForTimeout(20);
+      assert.equal(input.slice(before), ',.!?', 'Linux plain punctuation remains usable');
     }
     channels[0].write(`\x1b[2J\x1b[HAB${samples.cjkSample}🥳🧑‍💻α∑🇨🇳1️⃣❤️\x1b[6n`);
     for(let i=0;i<100 && !/\x1b\[1;19R/.test(input);i++)await new Promise(r=>setTimeout(r,20));

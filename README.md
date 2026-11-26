@@ -1,6 +1,6 @@
 # Terminal
 
-Terminal is an Electron and xterm.js desktop terminal for local Bash and Zsh sessions and SSH connections to Linux hosts.
+Terminal is an Electron and xterm.js desktop terminal for local Bash, Zsh, and Windows Command Prompt sessions and SSH connections to Linux hosts.
 
 ## Getting started
 
@@ -20,10 +20,10 @@ Terminal opens in English by default, regardless of the system language. To use 
 
 ## Local terminals
 
-Click **+ Local Terminal** in the header or **Open Local Terminal** on the home screen, then choose Bash or Zsh. The shell starts in your home directory and reads its interactive configuration. Local and SSH tabs share fonts, themes, search, clipboard shortcuts, and the Markdown reader. Type `exit` to close a local tab.
+Click **+ Local Terminal** in the header or **Open Local Terminal** on the home screen to start a shell in your home directory. Local and SSH tabs share fonts, themes, search, clipboard shortcuts, and the Markdown reader. Type `exit` to close a local tab.
 
-- Linux and macOS use Bash or Zsh installed on your `PATH`.
-- Windows uses the default WSL distribution. Install WSL and the shell you intend to use in that distribution.
+- **System Default** opens Bash on Linux, Zsh on macOS, or the native Command Prompt (`cmd.exe`) on Windows.
+- In **Settings → Local shell**, you can choose Bash or Zsh for future tabs. Linux and macOS use the shell on your `PATH`. On Windows, these two options use the default WSL distribution.
 
 ## Tabs, groups, and split view
 

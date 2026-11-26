@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('silk', {
+  appInfo: () => ipcRenderer.invoke('app:info'),
   connect: (profile, size) => ipcRenderer.invoke('ssh:connect', profile, size),
   startLocal: (id, shell, size) => ipcRenderer.invoke('local:start', id, shell, size),
   answerAuth: (requestId, answers) => ipcRenderer.invoke('ssh:auth-response',requestId,answers),
